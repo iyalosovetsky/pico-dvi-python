@@ -1,0 +1,5 @@
+micropython/
+__pycache__/
+secrets.py
+tools/cache/
+preview.png
