@@ -1,4 +1,5 @@
-# Home dashboard on Waveshare PICO-DVI-LCD: clock + Home Assistant tiles via MQTT.
+# Home dashboard on Waveshare PICO-DVI-LCD: clock + Home Assistant tiles
+# (REST API if secrets.HA_TOKEN is set, otherwise MQTT statestream).
 import asyncio
 import sys
 import time
@@ -12,6 +13,7 @@ d = Display()
 import config  # noqa: E402
 import net  # noqa: E402
 import tz  # noqa: E402
+import secrets  # noqa: E402
 from ha import HomeAssistant, parse_number  # noqa: E402
 from screen import Dashboard  # noqa: E402
 
@@ -88,7 +90,13 @@ async def network_task():
 async def main():
     entities = (config.BATTERY_SOC, config.BATTERY_VOLTAGE, config.BATTERY_POWER,
                 config.BATTERY_STATE, config.LOAD_POWER, config.GRID)
-    ha = HomeAssistant(entities, on_state, ui.set_mqtt)
+    if getattr(secrets, "HA_TOKEN", None):
+        # REST API with a long-lived token: works without any HA configuration
+        from ha_rest import HomeAssistantREST
+        ha = HomeAssistantREST(entities, on_state, ui.set_mqtt)
+    else:
+        # MQTT: needs mqtt_statestream in HA's configuration.yaml
+        ha = HomeAssistant(entities, on_state, ui.set_mqtt)
     await asyncio.gather(clock_task(), network_task(), ha.run())
 
 

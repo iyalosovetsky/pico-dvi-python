@@ -11,7 +11,7 @@ MicroPython v1.29.0 для Raspberry Pi Pico 2 W (RP2350) і Pico W (RP2040) з 
 | `picodvi/` | C-модуль `picodvi` + вендорна копія `libdvi` з [Wren6991/PicoDVI](https://github.com/Wren6991/PicoDVI) (commit `dccd738`, BSD-3) з патчами під MicroPython |
 | `boards/PICO2_W_DVI/` | Конфіг Pico 2 W (копія `RPI_PICO2_W` + хук soft-reset, 4 КБ C-heap, без `_thread`) |
 | `boards/PICO_W_DVI/` | Те саме для Pico W |
-| `device/` | Дашборд: `main.py`, `config.py` + `lib/` (display, screen, tz, net, ha) |
+| `device/` | Дашборд: `main.py`, `config.py` + `lib/` (display, screen, tz, net, ha, ha_rest) |
 | `romfs/` | Згенеровані шрифти `.fnt` і піктограми MDI (ROMFS, `tools/mkassets.py`) |
 | `tools/` | `mkassets.py` (TTF/MDI → `.fnt`), `preview.py` (рендер екрана в PNG на ПК), `hoststub/` |
 | `demo/main.py` | Демка: палітра, plasma (viper), м'ячики, зоряне поле |
@@ -45,7 +45,16 @@ python3 tools/preview.py preview.png      # той самий код екран�
 
 Плитки: батарея (SOC %, поки його немає — напруга), заряд/розряд батареї, споживання будинку;
 угорі — наявність мережі. Сутності — у `device/config.py` (профіль ha-solarman для Deye).
-Дані бере з `mqtt_statestream`, тож у `configuration.yaml` HA (і повний перезапуск HA):
+Два джерела даних (вибір автоматичний):
+
+1. **REST API (рекомендовано, без змін у HA).** У `secrets.py` додати довгостроковий токен
+   (HA → профіль → Безпека → Довгострокові токени доступу):
+   ```python
+   HA_TOKEN = "eyJ..."
+   # HA_URL = "http://192.168.x.x:8123"   # за замовчуванням http://<MQTT_HOST>:8123
+   ```
+   Пристрій опитує `/api/states/<entity>` кожні 5 с.
+2. **MQTT statestream** (якщо `HA_TOKEN` немає). У `configuration.yaml` HA (і повний перезапуск HA):
 
 ```yaml
 mqtt_statestream:
