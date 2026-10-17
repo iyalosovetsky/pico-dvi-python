@@ -51,7 +51,7 @@ DEFAULTS = [
     ("snake_hole_w", 13.0, "snake: hole size so the USB-C plug passes"),
     ("snake_hole_h", 8.0, "snake: hole height"),
     ("snake_w", 5.0, "snake: groove width (cable dia ~3.5-4.5 mm, press in)"),
-    ("snake_d", 4.0, "snake: groove depth into the back face"),
+    ("snake_d", 5.0, "snake: groove depth (45 deg roof; a 4 mm cable still fits)"),
     ("snake_amp", 8.0, "snake: zigzag amplitude (X)"),
     ("snake_n", 3, "snake: number of zigzag bends"),
     ("cable_pos", -5.5, "cable slot centre along that wall (X for bottom, Y for sides);"
@@ -86,12 +86,13 @@ DEFAULTS = [
     ("stand_cy", 11.5, "standoff rectangle centre Y (+ up)"),
     ("stand_dx", 62.0, "standoff spacing, horizontal (measured)"),
     ("stand_dy", 70.0, "standoff spacing, vertical (measured)"),
+    ("board_margin", 6.0, "keep-out around the driver board (standoffs +/- this + 4.5 mm board overhang)"),
     ("board_top", 7.7, "height of the standoff tops (board screw heads) above the panel back (measured)"),
     ("stand_boss_d", 10.0, "boss outer diameter (deep counterbore inside)"),
-    ("stand_floor", 2.0, "plastic under the screw head at the standoff (M3 x 8 reaches ~5 mm in)"),
+    ("stand_floor", 2.4, "plastic under the head cone at the standoff (M3 x 8 reaches ~5.4 mm in)"),
     ("stand_hole", 3.4, "screw hole (long M3 instead of the original board screws)"),
     ("boss_d", 9.0, "corner screw boss outer diameter in the back cover"),
-    ("corner_floor", 3.5, "plastic under the corner screw heads: M3 x 8 goes 4.5 mm into the 4.8 mm pilot"),
+    ("corner_floor", 3.9, "plastic under the corner head cones: M3 x 8 goes ~4.4 mm into the 4.8 mm pilot"),
     ("screw_inset", 6.0, "corner screws from both outer edges (= corner_r keeps them concentric)"),
     ("press_t", 1.6, "thickness of the frame pressing the panel border"),
 ]
@@ -130,6 +131,35 @@ def rounded_box(w, h, d, r, z0=0.0):
     return box.removeSplitter()
 
 
+def counterbore(x, y, z_floor, z_top, head_d, hole_d):
+    """Screw head pocket from z_floor up to z_top, ending in a 45 deg cone down to
+    the screw hole instead of a flat step: prints without supports (the pocket
+    opens on the print bed, so its end is a ceiling)."""
+    h = (head_d - hole_d) / 2
+    pocket = Part.makeCylinder(head_d / 2, z_top - z_floor, V(x, y, z_floor))
+    return pocket.fuse(Part.makeCone(hole_d / 2, head_d / 2, h, V(x, y, z_floor - h)))
+
+
+def groove_path(points, w, z_face, d):
+    """Groove of width w and depth d into the face at z_face (going -Z) along a
+    polyline; its end is a 45 deg roof, so it prints as a ceiling without supports."""
+    hw = w / 2
+    straight = d - hw  # depth of the vertical walls, then the roof
+    solid = None
+    for (x1, y1), (x2, y2) in zip(points, points[1:]):
+        length = math.hypot(x2 - x1, y2 - y1)
+        prof = Part.makePolygon([V(0, -hw, z_face + 1), V(0, hw, z_face + 1), V(0, hw, z_face - straight),
+                                 V(0, 0, z_face - d), V(0, -hw, z_face - straight), V(0, -hw, z_face + 1)])
+        seg = Part.Face(prof).extrude(V(length, 0, 0))
+        seg.rotate(V(0, 0, 0), V(0, 0, 1), math.degrees(math.atan2(y2 - y1, x2 - x1)))
+        seg.translate(V(x1, y1, 0))
+        solid = seg if solid is None else solid.fuse(seg)
+    for (x, y) in points:  # round joints: cylinder + 45 deg cone roof
+        solid = solid.fuse(Part.makeCylinder(hw, straight + 1, V(x, y, z_face - straight)))
+        solid = solid.fuse(Part.makeCone(hw, 0, hw, V(x, y, z_face - straight), V(0, 0, -1)))
+    return solid.removeSplitter()
+
+
 def sweep_path(points, w, z0, d):
     """Solid of width w swept along a polyline (rounded joints), from z0 to z0 + d."""
     solid = None
@@ -160,7 +190,7 @@ def snake_exit(back, p, oh, zb, wl):
     # rib inside the cover so the groove can be deeper than the back plate
     rib = sweep_path(pts, w + 2 * floor, zb - d - floor, d + floor - wl + 0.01)
     back = back.fuse(rib).removeSplitter()
-    back = back.cut(sweep_path(pts, w, zb - d, d + 1))
+    back = back.cut(groove_path(pts, w, zb, d))
     hole = rounded_box(p["snake_hole_w"], p["snake_hole_h"], d + floor + 2,
                        p["snake_hole_h"] / 2 - 0.01, zb - d - floor - 1)
     hole.translate(V(hx, hy, 0))
@@ -239,8 +269,8 @@ def build(p):
     for (x, y) in bosses:
         back = back.cut(Part.makeCylinder(p["screw_d"] / 2, depth + 1, V(x, y, z0 - 0.5)))
         # deep counterbore: only corner_floor of plastic under the head -> short screws
-        back = back.cut(Part.makeCylinder(p["screw_head_d"] / 2, depth - p["corner_floor"] + 1,
-                                          V(x, y, z0 + p["corner_floor"])))
+        back = back.cut(counterbore(x, y, z0 + p["corner_floor"], zb + 1,
+                                    p["screw_head_d"], p["screw_d"]))
     # cable slot in a wall, open at the back face (lay the cable in from the back)
     cw, ch, cp = p["cable_w"], p["cable_h"], p["cable_pos"]
     side = int(p["cable_side"])
@@ -261,6 +291,17 @@ def build(p):
         vent = rounded_box(3.0, 28.0, wl + 2, 1.49, zb - wl - 1)
         vent.translate(V(p["vent_x"] + (k - (n - 1) / 2) * 9.0, p["vent_y"], 0))
         back = back.cut(vent)
+    # keep-out for the driver board: nothing (e.g. the panel clamp near the top
+    # edge) may reach into the board's footprint below the standoff tops
+    if p["stand_on"]:
+        bx0 = p["stand_cx"] - p["stand_dx"] / 2 - 4.5 - p["board_margin"]
+        bx1 = p["stand_cx"] + p["stand_dx"] / 2 + 4.5 + p["board_margin"] + 3.0  # OSD buttons stick out
+        by0 = p["stand_cy"] - p["stand_dy"] / 2 - 4.5 - p["board_margin"]
+        by1 = p["stand_cy"] + p["stand_dy"] / 2 + 4.5 + p["board_margin"]
+        keep = Part.makeBox(bx1 - bx0, by1 - by0, p["board_top"] + 0.1, V(bx0, by0, z0 - 0.1))
+        # never cut the outer walls
+        keep = keep.common(rounded_box(ow - 2 * wl, oh - 2 * wl, p["board_top"] + 0.2, max(1.0, r - wl), z0 - 0.1))
+        back = back.cut(keep)
     # screw bosses down to the driver board standoffs: long M3 screws from the
     # back replace the original board screws and clamp board + panel
     if p["stand_on"]:
@@ -273,8 +314,8 @@ def build(p):
         for x, y in stands:
             back = back.cut(Part.makeCylinder(p["stand_hole"] / 2, zb - z_bot + 2, V(x, y, z_bot - 1)))
             # deep counterbore down to stand_floor above the boss end -> short screws
-            back = back.cut(Part.makeCylinder(p["screw_head_d"] / 2, zb - z_bot - p["stand_floor"] + 1,
-                                              V(x, y, z_bot + p["stand_floor"])))
+            back = back.cut(counterbore(x, y, z_bot + p["stand_floor"], zb + 1,
+                                        p["screw_head_d"], p["stand_hole"]))
     # access slot over the side-push OSD buttons of the driver board
     if p["osd_on"]:
         ow_ = p["osd_w"]
