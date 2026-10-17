@@ -46,8 +46,10 @@ class Dashboard:
         self._mqtt = None
         self._grid = None
         self._wx = None
-        self._warn = None
-        self._anim_right = config.ANIM_RIGHT  # no warning yet -> animate
+        self._warn = None  # current warning dict (or None)
+        self._solar = None  # (watts, today kWh) while the panels generate, else None
+        self._right = None  # what the right slot shows now (key), see _right_mode()
+        self._anim_right = config.ANIM_RIGHT
 
         self.PAL_SKY = make_palette(rgb, ((20, 24, 70), (64, 40, 160), (190, 70, 200),
                                           (255, 140, 120), (80, 200, 255), (30, 90, 200)))
@@ -69,7 +71,7 @@ class Dashboard:
         d = self.d
         d.fill(self.BG)
         self._minute = self._date = self._colon = self._wifi = self._mqtt = self._grid = None
-        self._wx = self._warn = None
+        self._wx = self._warn = self._right = None
         self._anim_right = config.ANIM_RIGHT
         self._date_w = 0
         for i in range(len(self.tiles)):
@@ -116,7 +118,7 @@ class Dashboard:
             d.icon("transmission-tower-off", 24, x, 6, self.RED, self.BG)
             d.text("ui16", "немає мережі", x - 4, 10, self.RED, self.BG, "r")
 
-    # --- weather (left: now, right: bad-weather warning) -------------------
+    # --- weather (left: now); right slot: warning / solar / animation ------
     CLOCK_Y = 40
     SIDE_W = 100
 
@@ -134,24 +136,57 @@ class Dashboard:
             d.text("val36", "%d°" % round(temp), self.SIDE_W // 2 + 4, 96, self.FG, self.BG, "c")
 
     def set_warning(self, w):
-        """w: weather.find_warning() dict or None (area left empty)."""
-        key = None if w is None else (w["icon"], w["title"], w["detail"], w["when"])
-        if key == self._warn:
-            return
-        self._warn = key
+        """w: weather.find_warning() dict or None. Drawn by the right slot."""
+        self._warn = w
+
+    def set_solar(self, watts, today_kwh=None):
+        """Solar tile is shown while the panels generate (hysteresis on the power)."""
+        if watts is None or watts < config.PV_HIDE_W:
+            self._solar = None
+        elif self._solar is not None or watts >= config.PV_SHOW_W:
+            self._solar = (watts, today_kwh)
+
+    def _right_mode(self, t_ms):
+        """Key of what the right slot should show: warning and solar alternate."""
+        items = []
+        w = self._warn
+        if w:
+            items.append(("warn", w["icon"], w["title"], w["detail"], w["when"]))
+        if self._solar is not None:
+            v, unit = self._power_text(self._solar[0], self.SIDE_W)
+            items.append(("solar", v, unit, self._kwh_text(self._solar[1])))
+        if not items:
+            return ("anim",)
+        return items[(t_ms // (config.SLOT_ROTATE_S * 1000)) % len(items)]
+
+    def _kwh_text(self, kwh):
+        if kwh is None:
+            return ""
+        return ("%.1f кВт·год" % kwh).replace(".", ",")
+
+    def _draw_right(self, mode):
         d = self.d
         x0 = d.w - self.SIDE_W
-        d.fill_rect(x0, 38, self.SIDE_W, 104, self.BG)
-        if w is None:
-            self._anim_right = config.ANIM_RIGHT
-            return
-        self._anim_right = False
         cx = x0 + self.SIDE_W // 2
-        d.image("wx/%s_44.pim" % w["icon"], cx - 22, 40)
-        d.text("ui16", w["title"], cx, 86, self.AMBER, self.BG, "c")
-        if w["detail"]:
-            d.text("ui16", w["detail"], cx, 104, self.FG, self.BG, "c")
-        d.text("ui16", w["when"], cx, 122 if w["detail"] else 104, self.DIM, self.BG, "c")
+        d.fill_rect(x0, 38, self.SIDE_W, 104, self.BG)
+        if mode[0] == "warn":
+            _, icon, title, detail, when = mode
+            d.image("wx/%s_44.pim" % icon, cx - 22, 40)
+            d.text("ui16", title, cx, 86, self.AMBER, self.BG, "c")
+            if detail:
+                d.text("ui16", detail, cx, 104, self.FG, self.BG, "c")
+            d.text("ui16", when, cx, 122 if detail else 104, self.DIM, self.BG, "c")
+        elif mode[0] == "solar":
+            _, value, unit, today = mode
+            d.round_rect(x0 + 4, 40, self.SIDE_W - 8, 96, 12, self.PANEL)
+            d.icon("solar-power", 24, x0 + 10, 47, self.YELLOW)
+            d.text("ui16", "Сонце", x0 + 38, 51, self.DIM)
+            w = d.text_width("val36", value) + 3 + d.text_width("ui16", unit)
+            vx = cx - w // 2
+            vx += d.text("val36", value, vx, 74, self.FG) + 3
+            d.text("ui16", unit, vx, 91, self.DIM)
+            if today:
+                d.text("ui16", today, cx, 114, self.YELLOW, -1, "c")
 
     # --- clock ------------------------------------------------------------
     def set_time(self, t, synced=True):
@@ -214,21 +249,28 @@ class Dashboard:
             vx += 3 + d.text("ui16", unit, vx + 3, y + 55, self.DIM)
         return vx
 
-    def _fits(self, value, unit):
-        return self.d.text_width("val36", value) + 3 + self.d.text_width("ui16", unit) <= self.TILE_W - 16
+    def _fits(self, value, unit, width=None):
+        width = (width or self.TILE_W) - 16
+        return self.d.text_width("val36", value) + 3 + self.d.text_width("ui16", unit) <= width
 
-    def _power_text(self, watts):
+    def _power_text(self, watts, width=None):
         w = abs(watts)
         if w < 1000:
             return "%d" % round(w), "Вт"
         for fmt in ("%.2f", "%.1f", "%.0f"):
             v = (fmt % (w / 1000)).replace(".", ",")
-            if self._fits(v, "кВт"):
+            if self._fits(v, "кВт", width):
                 break
         return v, "кВт"
 
     def animate(self, t_ms):
-        """Draws one frame of the current animation into the right slot."""
+        """Right slot: redraws the warning / solar tile when it changes, otherwise
+        draws one animation frame."""
+        mode = self._right_mode(t_ms)
+        if mode != self._right:
+            self._right = mode
+            self._draw_right(mode)
+        self._anim_right = mode[0] == "anim" and config.ANIM_RIGHT
         if not self._anim_right:
             return
         x0, y0, w, h = self.d.w - self.SIDE_W + 4, 40, self.SIDE_W - 8, 96

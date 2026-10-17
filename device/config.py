@@ -45,3 +45,10 @@ ANIM_FRAME_MS = 40
 
 # Battery tile: show the voltage next to the SOC when it is below this (V).
 BATTERY_VOLT_SHOW_BELOW = 53.0
+
+# --- Solar (shown in the right slot while the panels generate) --------------------
+PV_POWER = "sensor.inverter_pv_power"  # W (PV1 + PV2)
+PV_TODAY = "sensor.inverter_today_production"  # kWh produced today
+PV_SHOW_W = 20  # show the solar tile from this power...
+PV_HIDE_W = 10  # ...and hide it below this one (hysteresis, no flicker at dusk)
+SLOT_ROTATE_S = 8  # warning and solar tile alternate in the right slot

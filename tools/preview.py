@@ -63,8 +63,12 @@ def main():
         ui.set_battery(64, charging=False, volts=52.4)
         ui.set_warning(None)
         ui.animate(int(sys.argv[sys.argv.index("--anim") + 1]) if sys.argv[-1].isdigit() else 2400)
+    elif "--solar" in sys.argv:
+        ui.set_solar(1840, 6.4)
+        ui.animate(0)
     else:
         ui.set_warning({"icon": "rainy", "title": "Дощ", "detail": "3,4 мм/год", "when": "о 15:00"})
+        ui.animate(0)
     to_png(out, scale)
     print(out)
 

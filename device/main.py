@@ -22,7 +22,8 @@ from screen import Dashboard  # noqa: E402
 
 ui = Dashboard(d)
 ui.draw_all()
-state = {"synced": False, "soc": None, "volts": None, "power": None, "status": None}
+state = {"synced": False, "soc": None, "volts": None, "power": None, "status": None,
+         "pv": None, "pv_today": None}
 
 
 def charging():
@@ -65,6 +66,10 @@ def on_state(entity, payload):
         state["soc"] = parse_number(payload)
     elif entity == config.LOAD_POWER:
         ui.set_load(parse_number(payload))
+        return
+    elif entity in (config.PV_POWER, config.PV_TODAY):
+        state["pv" if entity == config.PV_POWER else "pv_today"] = parse_number(payload)
+        ui.set_solar(state["pv"], state["pv_today"])
         return
     elif entity == config.GRID:
         p = payload.strip().lower()
@@ -142,7 +147,8 @@ async def weather_task(ha):
 
 async def main():
     entities = (config.BATTERY_SOC, config.BATTERY_VOLTAGE, config.BATTERY_POWER,
-                config.BATTERY_STATE, config.LOAD_POWER, config.GRID)
+                config.BATTERY_STATE, config.LOAD_POWER, config.GRID,
+                config.PV_POWER, config.PV_TODAY)
     tasks = [clock_task(), network_task(), anim_task(), ota.serve()]
     if getattr(secrets, "HA_TOKEN", None):
         # REST API with a long-lived token: works without any HA configuration
