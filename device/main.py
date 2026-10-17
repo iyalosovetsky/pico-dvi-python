@@ -13,6 +13,7 @@ d = Display()
 
 import config  # noqa: E402
 import net  # noqa: E402
+import ota  # noqa: E402
 import tz  # noqa: E402
 import secrets  # noqa: E402
 from ha import HomeAssistant, parse_number  # noqa: E402
@@ -35,6 +36,11 @@ def charging():
     return (power > 0) == config.POWER_POSITIVE_IS_CHARGING
 
 
+def set_link(ok):
+    if not ota.busy:
+        ui.set_mqtt(ok)
+
+
 def redraw_battery():
     ch = charging()
     if state["soc"] is not None:
@@ -45,6 +51,8 @@ def redraw_battery():
 
 
 def on_state(entity, payload):
+    if ota.busy:
+        return
     if entity == config.BATTERY_STATE:
         status = payload.strip().lower()
         n = parse_number(status)
@@ -69,7 +77,7 @@ async def clock_task():
     last = None
     while True:
         now = time.time()
-        if now != last:
+        if now != last and not ota.busy:
             last = now
             ui.set_time(tz.localtime(now), state["synced"])
         await asyncio.sleep_ms(50)
@@ -79,7 +87,8 @@ async def network_task():
     next_sync = 0
     while True:
         ok = await net.connect()
-        ui.set_wifi(ok, net.rssi() if ok else None)
+        if not ota.busy:
+            ui.set_wifi(ok, net.rssi() if ok else None)
         if ok and time.ticks_diff(time.ticks_ms(), next_sync) >= 0:
             if net.sync_time():
                 state["synced"] = True
@@ -92,7 +101,8 @@ async def network_task():
 async def anim_task():
     while True:
         t0 = time.ticks_ms()
-        ui.animate(t0)
+        if not ota.busy:
+            ui.animate(t0)
         spent = time.ticks_diff(time.ticks_ms(), t0)
         await asyncio.sleep_ms(max(5, config.ANIM_FRAME_MS - spent))
 
@@ -100,6 +110,9 @@ async def anim_task():
 async def weather_task(ha):
     hourly, sun, next_fetch = None, None, 0
     while True:
+        if ota.busy:
+            await asyncio.sleep(1)
+            continue
         if net.wlan.isconnected() and time.ticks_diff(time.ticks_ms(), next_fetch) >= 0:
             try:
                 st = ha.get_state(config.WEATHER)
@@ -130,15 +143,15 @@ async def weather_task(ha):
 async def main():
     entities = (config.BATTERY_SOC, config.BATTERY_VOLTAGE, config.BATTERY_POWER,
                 config.BATTERY_STATE, config.LOAD_POWER, config.GRID)
-    tasks = [clock_task(), network_task(), anim_task()]
+    tasks = [clock_task(), network_task(), anim_task(), ota.serve()]
     if getattr(secrets, "HA_TOKEN", None):
         # REST API with a long-lived token: works without any HA configuration
         from ha_rest import HomeAssistantREST
-        ha = HomeAssistantREST(entities, on_state, ui.set_mqtt)
+        ha = HomeAssistantREST(entities, on_state, set_link)
         tasks.append(weather_task(ha))
     else:
         # MQTT: needs mqtt_statestream in HA's configuration.yaml (no weather)
-        ha = HomeAssistant(entities, on_state, ui.set_mqtt)
+        ha = HomeAssistant(entities, on_state, set_link)
     tasks.append(ha.run())
     await asyncio.gather(*tasks)
 

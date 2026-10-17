@@ -11,9 +11,10 @@ MicroPython v1.29.0 для Raspberry Pi Pico 2 W (RP2350) і Pico W (RP2040) з 
 | `picodvi/` | C-модуль `picodvi` + вендорна копія `libdvi` з [Wren6991/PicoDVI](https://github.com/Wren6991/PicoDVI) (commit `dccd738`, BSD-3) з патчами під MicroPython |
 | `boards/PICO2_W_DVI/` | Конфіг Pico 2 W (копія `RPI_PICO2_W` + хук soft-reset, 4 КБ C-heap, без `_thread`) |
 | `boards/PICO_W_DVI/` | Те саме для Pico W |
-| `device/` | Дашборд: `main.py`, `config.py` + `lib/` (display, screen, tz, net, ha, ha_rest, weather) |
+| `device/` | Дашборд: `main.py`, `config.py` + `lib/` (display, screen, tz, net, ha, ha_rest, weather, ota) |
+| `case/` | Корпус: FreeCAD-макрос, `.FCStd`, STL для друку, STEP |
 | `romfs/` | Згенеровані шрифти `.fnt` і піктограми MDI (ROMFS, `tools/mkassets.py`) |
-| `tools/` | `mkassets.py` (TTF/MDI → `.fnt`, погодні піктограми → `.pim`), `wxicons.py`, `preview.py` (рендер екрана в PNG на ПК), `hoststub/` |
+| `tools/` | `ota.py` (оновлення по Wi-Fi), `mkassets.py` (TTF/MDI → `.fnt`, погодні піктограми → `.pim`), `wxicons.py`, `preview.py` (рендер екрана в PNG на ПК), `hoststub/` |
 | `demo/main.py` | Демка: палітра, plasma (viper), м'ячики, зоряне поле |
 | `firmware/` | Готові прошивки `micropython-pico2-w-dvi.uf2`, `micropython-pico-w-dvi.uf2` |
 | `build.sh` | Збірка прошивки |
@@ -38,6 +39,24 @@ mpremote cp device/lib/*.py :lib/ + cp device/main.py device/config.py :
 mpremote cp secrets.py :secrets.py        # WIFI_SSID, WIFI_PASS, MQTT_* (не в git)
 python3 tools/preview.py preview.png      # той самий код екрана, відрендерений на ПК
 ```
+
+### Оновлення по повітрю (OTA)
+
+Після першої заливки через USB код і ROMFS оновлюються по Wi-Fi (`device/lib/ota.py`,
+HTTP на порту 8080, кожен запит з токеном). У `secrets.py` (локально й на пристрої):
+`OTA_TOKEN = "..."` і `OTA_HOST = "<IP плати>"` (краще закріпити IP у DHCP роутера).
+
+```bash
+./ota.sh info          # файли на пристрої (sha256), вільна RAM/flash
+./ota.sh               # (= push) залити змінені файли з device/ і перезапустити
+./ota.sh romfs         # залити romfs/ (~5 с), перезапуск; ./ota.sh assets — ще й перегенерувати
+./ota.sh all           # ассети + ROMFS + код
+./ota.sh put secrets.py /secrets.py
+```
+
+`ota.sh` — обгортка над `tools/ota.py` (запускає його з `python3 -I`, бо локальний
+`secrets.py` перекриває стандартний модуль `secrets`).
+Прошивка MicroPython (`.uf2`) по повітрю не оновлюється — для неї microUSB Pico.
 
 Годинник синхронізується з NTP, час — Europe/Kyiv (EU DST без бази часових поясів).
 
@@ -147,6 +166,26 @@ DVI після `start()` працює до апаратного ресету, п
   через ~10 кадрів.
 - Лічильники `dvi_dbg_irq` / `dvi_dbg_enc` для `picodvi.debug()`.
 - PIO-заголовки згенеровані заздалегідь (`*.pio.h`), бо qstr-прохід MicroPython іде до генерації.
+
+## Корпус (`case/`)
+
+Параметричний корпус для 7" PICO-DVI-LCD, FreeCAD: `case/make_case.FCMacro` будує
+`case.FCStd` (таблиця `Params` з усіма розмірами), `bezel.stl`, `back.stl`, `case.step`.
+
+```bash
+freecadcmd -c "__file__='case/make_case.FCMacro'; exec(open(__file__).read())"
+```
+
+- Рамка (5,6 мм) + задня кришка (28,9 мм), разом 181,5 × 116,8 × 34,5 мм; 4 × M3 × 10 у кутах.
+- Друк без підтримок: рамка лицем на стіл, кришка спинкою (лише короткі містки).
+- Вікно за виміряними рамками екрана (5,6 / 9,2 / 2,9 / 5,6 мм), симетричне ліворуч/праворуч;
+  виїмка під шлейф панелі на нижньому краю.
+- 4 бобишки на стійки плати драйвера (62 × 70 мм, висота 7,7 мм): довгі M3 × 22–25
+  замість штатних гвинтів притягують кришку до плати.
+- Кріплення на стіну: два «ключі» на 140 мм.
+- Живлення USB-C: отвір у задній стінці + «змійка» (жолоб 5 × 4 мм) до нижнього краю.
+- Щілина 20 мм під палець до кнопок OSD (вони натискаються вбік); вентиляція над радіатором.
+- Схема задньої кришки з позначками: `case/rear.png`.
 
 ## Пастка RP2350: таблиця розділів
 
