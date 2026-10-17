@@ -38,7 +38,6 @@ mpremote mkdir :lib
 mpremote cp device/lib/*.py :lib/ + cp device/main.py device/config.py :
 cp secrets.py.def secrets.py          # шаблон усіх ключів, заповнити
 mpremote cp secrets.py :secrets.py    # secrets.py не в git
-mpremote cp secrets.py :secrets.py        # secrets.py не в git
 python3 tools/preview.py preview.png      # той самий код екрана, відрендерений на ПК
 ```
 
