@@ -36,7 +36,8 @@ python3 tools/mkassets.py                 # шрифти/піктограми ->
 mpremote romfs deploy romfs               # у ROMFS (512 КБ, читається без копіювання в RAM)
 mpremote mkdir :lib
 mpremote cp device/lib/*.py :lib/ + cp device/main.py device/config.py :
-cp secrets.py.def secrets.py mpremote cp secrets.py :secrets.py        # WIFI_SSID, WIFI_PASS, MQTT_* (не в git)mpremote cp secrets.py :secrets.py        # WIFI_SSID, WIFI_PASS, MQTT_* (не в git) $EDITOR secrets.py   # шаблон усіх ключів
+cp secrets.py.def secrets.py          # шаблон усіх ключів, заповнити
+mpremote cp secrets.py :secrets.py    # secrets.py не в git
 mpremote cp secrets.py :secrets.py        # secrets.py не в git
 python3 tools/preview.py preview.png      # той самий код екрана, відрендерений на ПК
 ```
