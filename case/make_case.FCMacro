@@ -6,11 +6,19 @@
 # (or the defaults below) and run the macro again. Also exports STL + STEP.
 #
 # Parts (print without supports):
-#   Bezel - front frame, printed face down. Holds the panel in a pocket.
-#   Back  - rear cover with the electronics cavity, wall-mount keyholes, cable
-#           slot in the bottom wall, vents and optional desk feet; printed back
-#           down. 4x M3 screws go through bosses in the back into the bezel
-#           (self-tapping M3, or M3 heat-set inserts with screw_pilot = 4.0).
+#   Bezel - front plate, printed face down. Holds the panel in a pocket and
+#           drops into the front rebate of the back (its walls run up to the
+#           front face), so the side walls are one piece and the seam is hidden.
+#   Back  - thin rear cover: its back plate lies on the driver board standoffs.
+#           Wall-mount keyholes, a window for the heatsink, an opening over the
+#           Pico; printed back down. 4x M3 screws go through bosses in the back
+#           into the bezel (self-tapping M3, or heat-set inserts with
+#           screw_pilot = 4.0), 2x M3 into the lower board standoffs.
+#   Cap   - separate hump over the Pico, glued into the opening with its lip;
+#           printed roof down. The USB-C plug lies under the back plate, the
+#           cable leaves through a hole in it into the gap behind the case.
+#   Feet  - two spacers glued to the bottom of the back, as high as the cap,
+#           so the case hangs straight on the wall.
 import math
 import os
 
@@ -41,15 +49,21 @@ DEFAULTS = [
     ("fpc_relief", 1.2, "FPC relief in the back cover clamp where the FPC lies on the panel back"),
     ("border", 8.0, "frame width outside the panel pocket (room for screw bosses)"),
     ("front_t", 2.0, "front plate thickness"),
-    ("wall", 2.4, "side wall / back plate thickness"),
+    ("wall", 1.5, "side wall / back plate thickness"),
+    ("lid_fit", 0.2, "gap between the bezel and the back walls around it"),
+    ("press_skirt", 4.5, "panel clamp: flat ring width (3 mm on the panel border), then a"
+                         " hollow 45 deg skirt of the same horizontal thickness up to the wall"),
     ("corner_r", 6.0, "outer corner radius"),
-    ("cavity", 26.5, "inner depth behind the panel (measured 25 to the top of the Pico)"),
+    ("cavity", 9.4, "panel back to the back plate = top of the board standoffs"
+                    " (measured 13 from the panel front minus panel_t)"),
     ("ledge", 3.0, "back cover rim pressing on the panel border"),
-    ("cable_side", 3, "cable exit: 0 = bottom wall, 1 = left, 2 = right (seen from the back),"
-                      " 3 = hole in the back + snake groove down to the bottom edge"),
-    ("snake_x", -45.0, "snake: hole centre X (seen from the back; USB-C plug points this way)"),
-    ("snake_y", -5.5, "snake: hole centre Y (level with the board's USB-C)"),
-    ("snake_hole_w", 13.0, "snake: hole size so the USB-C plug passes"),
+    ("cable_side", 4, "cable exit: 0 = bottom wall, 1 = left, 2 = right (seen from the back),"
+                      " 3 = hole in the back + snake groove, 4 = hole in the back only (the cable"
+                      " goes down in the gap between the case and the wall)"),
+    ("snake_x", -62.0, "rear cable hole centre X (seen from the back): past the end of the"
+                       " USB-C plug, which points -X from the board edge at ~-25"),
+    ("snake_y", 35.0, "rear cable hole centre Y (USB-C at ~33.5, clear of the keyhole)"),
+    ("snake_hole_w", 13.0, "rear cable hole size so the USB-C plug passes"),
     ("snake_hole_h", 8.0, "snake: hole height"),
     ("snake_w", 5.0, "snake: groove width (cable dia ~3.5-4.5 mm, press in)"),
     ("snake_d", 5.0, "snake: groove depth (45 deg roof; a 4 mm cable still fits)"),
@@ -68,15 +82,15 @@ DEFAULTS = [
     ("key_slot_l", 10.0, "keyhole: slot length upwards from the entry"),
     ("feet_angle", 0.0, "desk tilt (deg); 0 = no feet (wall mount)"),
     ("osd_on", 1, "1 = slot in the back over the OSD buttons"),
-    ("osd_x", 50.0, "OSD slot centre X (seen from the back, + right); buttons at ~42..44, push outwards"),
+    ("osd_x", 52.5, "OSD slot centre X (seen from the back, + right); buttons at ~42..44, push outwards"),
     ("osd_y_top", 41.5, "OSD slot top Y (buttons -12.5 .. +33.5; >= 2 mm from standoff 4 boss)"),
     ("osd_y_bot", -18.5, "OSD slot bottom Y (>= 2 mm from standoff 1 boss)"),
-    ("osd_w", 20.0, "OSD slot width: a 12 mm finger + 8 mm, presses the buttons sideways"),
+    ("osd_w", 18.0, "OSD slot width: a 12 mm finger + 6 mm, presses the buttons sideways"),
     ("feet_span", 110.0, "distance between the two desk feet"),
     ("screw_d", 3.4, "screw clearance hole in the back"),
     ("screw_head_d", 6.2, "screw head counterbore diameter"),
     ("screw_pilot", 2.6, "pilot hole in the bezel boss (2.6 self-tap M3, 4.0 insert)"),
-    ("vent_n", 7, "number of vent slots"),
+    ("vent_n", 0, "number of vent slots in the back (0: the heatsink has its own window)"),
     ("vent_x", 6.0, "vent slots centre X (over the driver chip heatsink at ~(6, -2.4))"),
     ("vent_y", -2.4, "vent slots centre Y"),
     ("stand_on", 1, "1 = holes + bosses at the 4 driver-board standoffs"),
@@ -88,10 +102,24 @@ DEFAULTS = [
     ("stand_dx", 62.0, "standoff spacing, horizontal (measured)"),
     ("stand_dy", 70.0, "standoff spacing, vertical (measured)"),
     ("board_margin", 6.0, "keep-out around the driver board (standoffs +/- this + 4.5 mm board overhang)"),
-    ("board_top", 7.7, "height of the standoff tops (board screw heads) above the panel back (measured)"),
-    ("stand_boss_d", 10.0, "boss outer diameter (deep counterbore inside)"),
-    ("stand_floor", 2.4, "plastic under the head cone at the standoff (M3 x 8 reaches ~5.4 mm in)"),
-    ("stand_hole", 3.4, "screw hole (long M3 instead of the original board screws)"),
+    ("board_top", 9.4, "height of the standoff tops above the panel back (13 from the panel front)"),
+    ("stand_hole", 3.4, "screw hole over the two lower standoffs (M3 x 6, or M3 x 8 + washer)"),
+    # parts sticking out above the standoff tops, positions from the photo
+    # (same frame: seen from the back, FPC edge down)
+    ("rad_x", 7.7, "heatsink centre X (14 x 14 mm, 4-5 mm above the standoffs)"),
+    ("rad_y", 0.2, "heatsink centre Y"),
+    ("rad_win", 18.0, "square window in the back plate for the heatsink"),
+    ("pico_x0", -17.0, "cap clear area over the Pico: X from (microUSB end)"),
+    ("pico_x1", 40.5, "... X to (next to standoff 4)"),
+    ("pico_y0", 24.0, "... Y from"),
+    ("pico_y1", 52.0, "... Y to (the Pico sits at the panel edge)"),
+    ("pico_top", 22.0, "top of the Pico above the panel front (measured)"),
+    ("cap_clear", 1.5, "air above the Pico under the cap roof"),
+    ("cap_lip", 1.4, "cap lip width (goes into the opening, wall is wall + lip thick)"),
+    ("cap_fit", 0.2, "gap between the cap lip and the opening"),
+    ("feet_on", 1, "1 = export two spacer feet for the wall (glued at the bottom)"),
+    ("foot_w", 14.0, "foot size"),
+    ("foot_y", -42.0, "foot centre Y (X = +/- key_span / 2)"),
     ("boss_d", 9.0, "corner screw boss outer diameter in the back cover"),
     ("corner_floor", 3.9, "plastic under the corner head cones: M3 x 8 goes ~4.4 mm into the 4.8 mm pilot"),
     ("screw_inset", 6.0, "corner screws from both outer edges (= corner_r keeps them concentric)"),
@@ -220,7 +248,11 @@ def build(p):
     bosses = [(ox + sx * boss_x, sy * boss_y) for sx in (-1, 1) for sy in (-1, 1)]
 
     # --- bezel -----------------------------------------------------------
-    bezel = rounded_box(ow, oh, seam, r, 0.0, ox)
+    wl = p["wall"]
+    # the bezel sits inside the back's walls (rebate), lid_fit all around
+    inset = wl + p["lid_fit"]
+    bezel_box = lambda: rounded_box(ow - 2 * inset, oh - 2 * inset, seam, max(1.0, r - inset), 0.0, ox)
+    bezel = bezel_box()
     # panel pocket, open to the back
     bezel = bezel.cut(Part.makeBox(pw, ph, p["panel_t"] + 1, V(-pw / 2, -ph / 2, p["front_t"])))
     # visible window (from the measured borders) with a 45 deg chamfer
@@ -253,10 +285,10 @@ def build(p):
     depth = p["cavity"] + p["wall"]
     z0 = seam
     zb = z0 + depth  # outer back face
-    wl = p["wall"]
-    # thin shell open towards the front
-    back = rounded_box(ow, oh, depth, r, z0, ox)
-    back = back.cut(rounded_box(ow - 2 * wl, oh - 2 * wl, p["cavity"], max(1.0, r - wl), z0 - 0.01, ox))
+    # thin shell open towards the front; the walls run up to the front face
+    # (z = 0) and enclose the bezel
+    back = rounded_box(ow, oh, zb, r, 0.0, ox)
+    back = back.cut(rounded_box(ow - 2 * wl, oh - 2 * wl, zb - wl + 0.01, max(1.0, r - wl), -0.01, ox))
     # frame pressing the panel border against the bezel. Its inner face is a
     # 45 deg slope down to the wall, so the back prints without supports.
     iw, ih = pw - 2 * p["ledge"], ph - 2 * p["ledge"]
@@ -268,6 +300,15 @@ def build(p):
     slope = Part.makeLoft([rect(iw, ih, z0 + p["press_t"]), rect(iw + 2 * d, ih + 2 * d, z0 + p["press_t"] + d)], True)
     inner_hole = Part.makeBox(iw, ih, p["press_t"] + 0.02, V(-iw / 2, -ih / 2, z0 - 0.01)).fuse(slope)
     press = rounded_box(cw_in + 0.02, ch_in + 0.02, p["press_t"] + d, max(1.0, r - wl), z0, ox).cut(inner_hole)
+    # hollow under the skirt: only a 45 deg plate of press_skirt (horizontal)
+    # stays; the hollow opens to the front, so its roof faces up when printed
+    k = p["press_skirt"]
+    keep = Part.makeBox(iw + 2 * k, ih + 2 * k, p["press_t"] + 0.02, V(-iw / 2 - k, -ih / 2 - k, z0 - 0.01)).fuse(
+        Part.makeLoft([rect(iw + 2 * k, ih + 2 * k, z0 + p["press_t"]),
+                       rect(iw + 2 * k + 2 * d, ih + 2 * k + 2 * d, z0 + p["press_t"] + d)], True))
+    press = press.cut(rounded_box(cw_in - 0.02, ch_in - 0.02, p["press_t"] + d, max(1.0, r - wl), z0 - 0.01, ox)
+                      .cut(keep))
+    press = press.common(rounded_box(cw_in + 0.1, ch_in + 0.1, zb - wl - z0 + 0.5, max(1.0, r - wl), z0 - 0.02, ox))
     back = back.fuse(press)
     # no clamping on the FPC where it lies on the panel back along the bottom edge
     back = back.cut(Part.makeBox(p["fpc_w"], p["ledge"] + p["fpc_out"] + 4, p["fpc_relief"] + 0.1,
@@ -286,6 +327,9 @@ def build(p):
     side = int(p["cable_side"])
     if side == 3:
         back = snake_exit(back, p, oh, zb, wl)
+    elif side == 4:
+        hole = rounded_box(p["snake_hole_w"], p["snake_hole_h"], wl + 2, p["snake_hole_h"] / 2 - 0.01, zb - wl - 1)
+        back = back.cut(hole.translate(V(p["snake_x"], p["snake_y"], 0)))
     elif side == 0:
         back = back.cut(Part.makeBox(cw, wl + 2, ch + 0.5, V(cp - cw / 2, -oh / 2 - 1, zb - ch)))
     else:
@@ -308,24 +352,23 @@ def build(p):
         bx1 = p["stand_cx"] + p["stand_dx"] / 2 + 4.5 + p["board_margin"] + 3.0  # OSD buttons stick out
         by0 = p["stand_cy"] - p["stand_dy"] / 2 - 4.5 - p["board_margin"]
         by1 = p["stand_cy"] + p["stand_dy"] / 2 + 4.5 + p["board_margin"]
-        keep = Part.makeBox(bx1 - bx0, by1 - by0, p["board_top"] + 0.1, V(bx0, by0, z0 - 0.1))
+        keep = Part.makeBox(bx1 - bx0, by1 - by0, min(p["board_top"], p["cavity"]) + 0.1, V(bx0, by0, z0 - 0.1))
         # never cut the outer walls
         keep = keep.common(rounded_box(ow - 2 * wl, oh - 2 * wl, p["board_top"] + 0.2, max(1.0, r - wl), z0 - 0.1, ox))
         back = back.cut(keep)
-    # screw bosses down to the driver board standoffs: long M3 screws from the
-    # back replace the original board screws and clamp board + panel
+    # the back plate lies on the board standoffs; M3 through the plate into the
+    # two lower ones (the upper two are next to the Pico, under the cap)
     if p["stand_on"]:
-        z_bot = z0 + p["board_top"] + 0.5  # boss end, just above the standoff
-        stands = [(p["stand_cx"] + sx * p["stand_dx"] / 2, p["stand_cy"] + sy * p["stand_dy"] / 2)
-                  for sx in (-1, 1) for sy in (-1, 1)]
-        for x, y in stands:
-            back = back.fuse(Part.makeCylinder(p["stand_boss_d"] / 2, zb - z_bot, V(x, y, z_bot)))
-        back = back.removeSplitter()
-        for x, y in stands:
-            back = back.cut(Part.makeCylinder(p["stand_hole"] / 2, zb - z_bot + 2, V(x, y, z_bot - 1)))
-            # deep counterbore down to stand_floor above the boss end -> short screws
-            back = back.cut(counterbore(x, y, z_bot + p["stand_floor"], zb + 1,
-                                        p["screw_head_d"], p["stand_hole"]))
+        for sx in (-1, 1):
+            x = p["stand_cx"] + sx * p["stand_dx"] / 2
+            y = p["stand_cy"] - p["stand_dy"] / 2
+            back = back.cut(Part.makeCylinder(p["stand_hole"] / 2, wl + 2, V(x, y, zb - wl - 1)))
+    # window for the heatsink (sticks out 4-5 mm above the standoffs)
+    rw = p["rad_win"]
+    back = back.cut(rounded_box(rw, rw, wl + 2, 2.0, zb - wl - 1).translate(V(p["rad_x"], p["rad_y"], 0)))
+    # opening for the cap over the Pico and the USB-C plug
+    lip = p["cap_lip"]
+    back = back.cut(cap_area(p, lip, zb - wl - 1, wl + 2))
     # access slot over the side-push OSD buttons of the driver board
     if p["osd_on"]:
         ow_ = p["osd_w"]
@@ -367,9 +410,50 @@ def build(p):
         back = back.removeSplitter()
 
     # nothing may stick out of the outer envelope (e.g. bosses near the corners)
-    bezel = bezel.common(rounded_box(ow, oh, seam, r, 0.0, ox)).removeSplitter()
-    back = back.common(rounded_box(ow, oh, depth + 200, r, z0, ox)).removeSplitter() if p["feet_angle"] <= 0 else back
-    return bezel, back
+    bezel = bezel.common(bezel_box()).removeSplitter()
+    back = back.common(rounded_box(ow, oh, zb + 200, r, 0.0, ox)).removeSplitter() if p["feet_angle"] <= 0 else back
+    return bezel, back, build_cap(p, zb, wl), build_feet(p, zb, wl)
+
+
+def cap_area(p, grow, z0, d):
+    """Clear area over the Pico grown by `grow`, from z0 to z0 + d."""
+    x0, x1, y0, y1 = p["pico_x0"], p["pico_x1"], p["pico_y0"], p["pico_y1"]
+    area = rounded_box(x1 - x0 + 2 * grow, y1 - y0 + 2 * grow, d, 1.0 + grow, z0)
+    return area.translate(V((x0 + x1) / 2, (y0 + y1) / 2, 0))
+
+
+def cap_top(p):
+    """Outer roof plane of the cap = the plane that touches the wall."""
+    return p["front_t"] + p["pico_top"] + p["cap_clear"] + p["wall"]
+
+
+def build_cap(p, zb, wl):
+    """Hump over the Pico: walls wall + lip thick standing on the back plate,
+    the lip goes into the opening; roof at cap_top. Modelled roof up, exported
+    roof down (prints without supports, the lip is the inner part of the wall)."""
+    lip, fit = p["cap_lip"], p["cap_fit"]
+    zt = cap_top(p)
+    cap = cap_area(p, lip + wl, zb, zt - zb).fuse(cap_area(p, lip - fit, zb - wl, wl + 0.01))
+    cap = cap.cut(cap_area(p, 0.0, zb - wl - 1, zt - wl - (zb - wl - 1))).removeSplitter()
+    # vent slots in the roof over the Pico (RP2350 + Wi-Fi)
+    for k in range(4):
+        x = (p["pico_x0"] + p["pico_x1"]) / 2 + (k - 1.5) * 9.0
+        cap = cap.cut(rounded_box(3.0, 14.0, wl + 2, 1.49, zt - wl - 1).translate(
+            V(x, (p["pico_y0"] + p["pico_y1"]) / 2, 0)))
+    return cap
+
+
+def build_feet(p, zb, wl):
+    """Two spacers as high as the cap, glued to the back near the bottom."""
+    if not p["feet_on"]:
+        return None
+    zt = cap_top(p)
+    feet = None
+    for sx in (-1, 1):
+        foot = rounded_box(p["foot_w"], p["foot_w"], zt - zb, 3.0, zb)
+        foot.translate(V(sx * p["key_span"] / 2, p["foot_y"], 0))
+        feet = foot if feet is None else feet.fuse(foot)
+    return feet
 
 
 def main():
@@ -379,24 +463,29 @@ def main():
     else:
         doc = App.newDocument("PicoDviCase")
     p = get_params(doc)
-    bezel, back = build(p)
-    for name, shape in (("Bezel", bezel), ("Back", back)):
+    bezel, back, cap, feet = build(p)
+    parts = [("Bezel", bezel), ("Back", back), ("Cap", cap)] + ([("Feet", feet)] if feet else [])
+    for name, shape in parts:
         obj = doc.getObject(name) or doc.addObject("Part::Feature", name)
         obj.Shape = shape
+    if not feet and doc.getObject("Feet"):
+        doc.removeObject("Feet")
     doc.recompute()
     doc.saveAs(path)
 
     import Mesh
-    for name in ("Bezel", "Back"):
+    names = [n for n, _ in parts]
+    for name in names:
         shape = doc.getObject(name).Shape
-        # print orientation: bezel face down (as modelled), back cover back down
-        if name == "Back":
+        # print orientation: bezel face down, feet as modelled; back cover
+        # back down, cap roof down
+        if name in ("Back", "Cap"):
             shape = shape.copy()
             shape.rotate(V(0, 0, 0), V(1, 0, 0), 180)
         mesh = Mesh.Mesh(shape.tessellate(0.05))
         mesh.write(os.path.join(HERE, name.lower() + ".stl"))
-    Part.export([doc.getObject("Bezel"), doc.getObject("Back")], os.path.join(HERE, "case.step"))
-    for name in ("Bezel", "Back"):
+    Part.export([doc.getObject(n) for n in names], os.path.join(HERE, "case.step"))
+    for name in names:
         s = doc.getObject(name).Shape
         bb = s.BoundBox
         print("%-6s %.1f x %.1f x %.1f mm, volume %.0f cm3, valid=%s"
