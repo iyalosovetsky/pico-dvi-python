@@ -2,7 +2,7 @@
 """Renders the dashboard on the PC with the real device code + host stubs.
 
 Usage: tools/preview.py [out.png] [--scale N]
-Shows: synced clock 14:37:24 on 2026-10-17, battery 76 % charging, 1840 W.
+Shows: clock 14:37:24 on 2026-10-17, battery 76 %, discharging 1840 W, load 612 W, no grid.
 """
 import os
 import sys
@@ -53,8 +53,11 @@ def main():
     utc = time.mktime((2026, 10, 17, 11, 37, 24, 0, 0, 0))
     ui.set_wifi(True, -58)
     ui.set_time(tz.localtime(utc), True)
-    ui.set_battery(76, charging=True)
-    ui.set_power(1840)
+    ui.set_battery(76, charging=False)
+    ui.set_power(1840, charging=False)
+    ui.set_load(612)
+    ui.set_grid(False)
+    ui.set_mqtt(True)
     to_png(out, scale)
     print(out)
 

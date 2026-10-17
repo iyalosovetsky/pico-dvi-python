@@ -11,7 +11,7 @@ MicroPython v1.29.0 для Raspberry Pi Pico 2 W (RP2350) і Pico W (RP2040) з 
 | `picodvi/` | C-модуль `picodvi` + вендорна копія `libdvi` з [Wren6991/PicoDVI](https://github.com/Wren6991/PicoDVI) (commit `dccd738`, BSD-3) з патчами під MicroPython |
 | `boards/PICO2_W_DVI/` | Конфіг Pico 2 W (копія `RPI_PICO2_W` + хук soft-reset, 4 КБ C-heap, без `_thread`) |
 | `boards/PICO_W_DVI/` | Те саме для Pico W |
-| `device/` | Дашборд: `main.py` + `lib/` (display, screen, tz, net) |
+| `device/` | Дашборд: `main.py`, `config.py` + `lib/` (display, screen, tz, net, ha) |
 | `romfs/` | Згенеровані шрифти `.fnt` і піктограми MDI (ROMFS, `tools/mkassets.py`) |
 | `tools/` | `mkassets.py` (TTF/MDI → `.fnt`), `preview.py` (рендер екрана в PNG на ПК), `hoststub/` |
 | `demo/main.py` | Демка: палітра, plasma (viper), м'ячики, зоряне поле |
@@ -34,12 +34,34 @@ mpremote cp demo/main.py :main.py + reset
 python3 tools/mkassets.py                 # шрифти/піктограми -> romfs/
 mpremote romfs deploy romfs               # у ROMFS (512 КБ, читається без копіювання в RAM)
 mpremote mkdir :lib
-mpremote cp device/lib/*.py :lib/ + cp device/main.py :main.py
+mpremote cp device/lib/*.py :lib/ + cp device/main.py device/config.py :
 mpremote cp secrets.py :secrets.py        # WIFI_SSID, WIFI_PASS, MQTT_* (не в git)
 python3 tools/preview.py preview.png      # той самий код екрана, відрендерений на ПК
 ```
 
 Годинник синхронізується з NTP, час — Europe/Kyiv (EU DST без бази часових поясів).
+
+### Home Assistant (MQTT)
+
+Плитки: батарея (SOC %, поки його немає — напруга), заряд/розряд батареї, споживання будинку;
+угорі — наявність мережі. Сутності — у `device/config.py` (профіль ha-solarman для Deye).
+Дані бере з `mqtt_statestream`, тож у `configuration.yaml` HA (і повний перезапуск HA):
+
+```yaml
+mqtt_statestream:
+  base_topic: ha
+  include:
+    entities:
+      - sensor.inverter_battery
+      - sensor.inverter_battery_voltage
+      - sensor.inverter_battery_power
+      - sensor.inverter_battery_state
+      - sensor.inverter_load_power
+      - binary_sensor.inverter_grid
+```
+
+Пристрій публікує `picodvi/status` = `online`/`offline` (last will). MQTT-клієнт — `umqtt.simple`
+(вшитий у прошивку).
 
 ## API
 

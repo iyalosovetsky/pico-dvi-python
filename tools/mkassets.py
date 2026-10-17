@@ -48,7 +48,7 @@ ICONS = [
     "battery-charging-30", "battery-charging-20", "battery-charging-10",
     "battery-charging-outline",
     "flash", "lightning-bolt", "home-lightning-bolt", "transmission-tower",
-    "solar-power", "power-plug", "meter-electric",
+    "transmission-tower-off", "solar-power", "power-plug", "meter-electric",
     "clock-outline", "calendar", "wifi", "wifi-off", "wifi-strength-1",
     "wifi-strength-2", "wifi-strength-3", "wifi-strength-4",
     "thermometer", "water-percent", "home", "information-outline", "alert",
