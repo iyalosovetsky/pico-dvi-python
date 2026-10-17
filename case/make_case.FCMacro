@@ -17,8 +17,9 @@
 #   Cap   - separate hump over the Pico, glued into the opening with its lip;
 #           printed roof down. The USB-C plug lies under the back plate, the
 #           cable leaves through a hole in it into the gap behind the case.
-#   Feet  - two spacers glued to the bottom of the back, as high as the cap,
-#           so the case hangs straight on the wall.
+#   Feet  - two spacers at the bottom of the back, as high as the cap, so the
+#           case hangs straight on the wall. Each is held by an M3 x 8 screwed
+#           from inside the back (before the bezel goes on) into its pilot hole.
 import math
 import os
 
@@ -117,7 +118,7 @@ DEFAULTS = [
     ("cap_clear", 1.5, "air above the Pico under the cap roof"),
     ("cap_lip", 1.4, "cap lip width (goes into the opening, wall is wall + lip thick)"),
     ("cap_fit", 0.2, "gap between the cap lip and the opening"),
-    ("feet_on", 1, "1 = export two spacer feet for the wall (glued at the bottom)"),
+    ("feet_on", 1, "1 = two spacer feet for the wall, screwed from inside (M3 x 8)"),
     ("foot_w", 14.0, "foot size"),
     ("foot_y", -42.0, "foot centre Y (X = +/- key_span / 2)"),
     ("boss_d", 9.0, "corner screw boss outer diameter in the back cover"),
@@ -366,6 +367,11 @@ def build(p):
     # window for the heatsink (sticks out 4-5 mm above the standoffs)
     rw = p["rad_win"]
     back = back.cut(rounded_box(rw, rw, wl + 2, 2.0, zb - wl - 1).translate(V(p["rad_x"], p["rad_y"], 0)))
+    # screw holes for the feet (screwed from inside, head on the plate)
+    if p["feet_on"]:
+        for sx in (-1, 1):
+            back = back.cut(Part.makeCylinder(p["screw_d"] / 2, wl + 2,
+                                              V(sx * p["key_span"] / 2, p["foot_y"], zb - wl - 1)))
     # opening for the cap over the Pico and the USB-C plug
     lip = p["cap_lip"]
     back = back.cut(cap_area(p, lip, zb - wl - 1, wl + 2))
@@ -452,6 +458,10 @@ def build_feet(p, zb, wl):
     for sx in (-1, 1):
         foot = rounded_box(p["foot_w"], p["foot_w"], zt - zb, 3.0, zb)
         foot.translate(V(sx * p["key_span"] / 2, p["foot_y"], 0))
+        # pilot for the M3 x 8 through the 1.5 mm plate (6.5 mm in)
+        x, y, pr = sx * p["key_span"] / 2, p["foot_y"], p["screw_pilot"] / 2
+        foot = foot.cut(Part.makeCylinder(pr, 8.0, V(x, y, zb - 0.5)))
+        foot = foot.cut(Part.makeCone(pr, 0, pr, V(x, y, zb + 7.5)))  # 45 deg end, no flat ceiling
         feet = foot if feet is None else feet.fuse(foot)
     return feet
 
