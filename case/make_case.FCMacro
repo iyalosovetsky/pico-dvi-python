@@ -31,7 +31,8 @@ DEFAULTS = [
     ("border_bottom", 9.2, "panel edge to visible area, bottom (FPC side)"),
     ("border_left", 2.9, "panel edge to visible area, left"),
     ("border_right", 5.6, "panel edge to visible area, right"),
-    ("window_sym", 1, "1 = window symmetric left/right (uses the smaller border)"),
+    ("frame_sym", 1, "1 = window exactly over the visible area, case widened on the narrow"
+                     " border side so the visible frame is symmetric"),
     ("window_margin", 0.3, "window larger than the visible area on each side"),
     ("fit", 0.4, "clearance around the panel"),
     ("fpc_x", 0.5, "panel FPC (flat cable) centre X on the bottom edge (seen from the back), from photo"),
@@ -120,8 +121,10 @@ def get_params(doc):
     return p
 
 
-def rounded_box(w, h, d, r, z0=0.0):
-    """Box centred on X/Y, from z0 to z0 + d, vertical edges rounded with r."""
+def rounded_box(w, h, d, r, z0=0.0, cx=0.0):
+    """Box centred on (cx, 0), from z0 to z0 + d, vertical edges rounded with r."""
+    if cx:
+        return rounded_box(w, h, d, r, z0).translate(V(cx, 0, 0))
     r = max(0.01, min(r, w / 2 - 0.01, h / 2 - 0.01))
     box = Part.makeBox(w - 2 * r, h, d, V(-w / 2 + r, -h / 2, z0))
     box = box.fuse(Part.makeBox(w, h - 2 * r, d, V(-w / 2, -h / 2 + r, z0)))
@@ -200,23 +203,29 @@ def snake_exit(back, p, oh, zb, wl):
 def build(p):
     pw, ph = p["panel_w"] + 2 * p["fit"], p["panel_h"] + 2 * p["fit"]
     ow, oh = pw + 2 * p["border"], ph + 2 * p["border"]
+    # The screen's left/right borders differ (seen from the front). With
+    # frame_sym the case gets wider on the narrow-border side (left from the
+    # front = +X) so the visible frame around the window is the same on both sides.
+    ox = 0.0
+    if p["frame_sym"]:
+        extra = p["border_right"] - p["border_left"]
+        ow += abs(extra)
+        ox = extra / 2
     r = p["corner_r"]
     seam = p["front_t"] + p["panel_t"]  # bezel back face = panel back plane
     # corner screws sit in the centre of the corner rounding, so bosses and
     # counterbores stay concentric with the outer arc
     boss_x = ow / 2 - p["screw_inset"]
     boss_y = oh / 2 - p["screw_inset"]
-    bosses = [(sx * boss_x, sy * boss_y) for sx in (-1, 1) for sy in (-1, 1)]
+    bosses = [(ox + sx * boss_x, sy * boss_y) for sx in (-1, 1) for sy in (-1, 1)]
 
     # --- bezel -----------------------------------------------------------
-    bezel = rounded_box(ow, oh, seam, r)
+    bezel = rounded_box(ow, oh, seam, r, 0.0, ox)
     # panel pocket, open to the back
     bezel = bezel.cut(Part.makeBox(pw, ph, p["panel_t"] + 1, V(-pw / 2, -ph / 2, p["front_t"])))
     # visible window (from the measured borders) with a 45 deg chamfer
     m = p["window_margin"]
     bl, br = p["border_left"] - m, p["border_right"] - m
-    if p["window_sym"]:
-        bl = br = min(bl, br)
     bt, bb = p["border_top"] - m, p["border_bottom"] - m
     # the screen's left border (seen from the front) is on the +X side
     x_l, x_r = -p["panel_w"] / 2 + br, p["panel_w"] / 2 - bl
@@ -246,18 +255,19 @@ def build(p):
     zb = z0 + depth  # outer back face
     wl = p["wall"]
     # thin shell open towards the front
-    back = rounded_box(ow, oh, depth, r, z0)
-    back = back.cut(rounded_box(ow - 2 * wl, oh - 2 * wl, p["cavity"], max(1.0, r - wl), z0 - 0.01))
+    back = rounded_box(ow, oh, depth, r, z0, ox)
+    back = back.cut(rounded_box(ow - 2 * wl, oh - 2 * wl, p["cavity"], max(1.0, r - wl), z0 - 0.01, ox))
     # frame pressing the panel border against the bezel. Its inner face is a
     # 45 deg slope down to the wall, so the back prints without supports.
     iw, ih = pw - 2 * p["ledge"], ph - 2 * p["ledge"]
     cw_in, ch_in = ow - 2 * wl, oh - 2 * wl
-    d = max(cw_in - iw, ch_in - ih) / 2 + 0.5  # slope height = overhang width
+    # slope height = widest overhang (the wall is farther on the widened side)
+    d = max(cw_in / 2 + abs(ox) - iw / 2, (ch_in - ih) / 2) + 0.5
     rect = lambda w, h, z: Part.makePolygon([V(-w / 2, -h / 2, z), V(w / 2, -h / 2, z),
                                              V(w / 2, h / 2, z), V(-w / 2, h / 2, z), V(-w / 2, -h / 2, z)])
     slope = Part.makeLoft([rect(iw, ih, z0 + p["press_t"]), rect(iw + 2 * d, ih + 2 * d, z0 + p["press_t"] + d)], True)
     inner_hole = Part.makeBox(iw, ih, p["press_t"] + 0.02, V(-iw / 2, -ih / 2, z0 - 0.01)).fuse(slope)
-    press = rounded_box(cw_in + 0.02, ch_in + 0.02, p["press_t"] + d, max(1.0, r - wl), z0).cut(inner_hole)
+    press = rounded_box(cw_in + 0.02, ch_in + 0.02, p["press_t"] + d, max(1.0, r - wl), z0, ox).cut(inner_hole)
     back = back.fuse(press)
     # no clamping on the FPC where it lies on the panel back along the bottom edge
     back = back.cut(Part.makeBox(p["fpc_w"], p["ledge"] + p["fpc_out"] + 4, p["fpc_relief"] + 0.1,
@@ -279,7 +289,7 @@ def build(p):
     elif side == 0:
         back = back.cut(Part.makeBox(cw, wl + 2, ch + 0.5, V(cp - cw / 2, -oh / 2 - 1, zb - ch)))
     else:
-        x0 = -ow / 2 - 1 if side == 1 else ow / 2 - wl - 1
+        x0 = ox - ow / 2 - 1 if side == 1 else ox + ow / 2 - wl - 1
         back = back.cut(Part.makeBox(wl + 2, cw, ch + 0.5, V(x0, cp - cw / 2, zb - ch)))
     if p["cable_rear"]:
         slot = rounded_box(cw, ch, wl + 2, ch / 2 - 0.01, zb - wl - 1)
@@ -300,7 +310,7 @@ def build(p):
         by1 = p["stand_cy"] + p["stand_dy"] / 2 + 4.5 + p["board_margin"]
         keep = Part.makeBox(bx1 - bx0, by1 - by0, p["board_top"] + 0.1, V(bx0, by0, z0 - 0.1))
         # never cut the outer walls
-        keep = keep.common(rounded_box(ow - 2 * wl, oh - 2 * wl, p["board_top"] + 0.2, max(1.0, r - wl), z0 - 0.1))
+        keep = keep.common(rounded_box(ow - 2 * wl, oh - 2 * wl, p["board_top"] + 0.2, max(1.0, r - wl), z0 - 0.1, ox))
         back = back.cut(keep)
     # screw bosses down to the driver board standoffs: long M3 screws from the
     # back replace the original board screws and clamp board + panel
@@ -357,8 +367,8 @@ def build(p):
         back = back.removeSplitter()
 
     # nothing may stick out of the outer envelope (e.g. bosses near the corners)
-    bezel = bezel.common(rounded_box(ow, oh, seam, r)).removeSplitter()
-    back = back.common(rounded_box(ow, oh, depth + 200, r, z0)).removeSplitter() if p["feet_angle"] <= 0 else back
+    bezel = bezel.common(rounded_box(ow, oh, seam, r, 0.0, ox)).removeSplitter()
+    back = back.common(rounded_box(ow, oh, depth + 200, r, z0, ox)).removeSplitter() if p["feet_angle"] <= 0 else back
     return bezel, back
 
 
