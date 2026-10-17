@@ -1,6 +1,7 @@
 # Home dashboard on Waveshare PICO-DVI-LCD: clock + Home Assistant tiles
 # (REST API if secrets.HA_TOKEN is set, otherwise MQTT statestream).
 import asyncio
+import gc
 import sys
 import time
 
@@ -15,6 +16,7 @@ import net  # noqa: E402
 import tz  # noqa: E402
 import secrets  # noqa: E402
 from ha import HomeAssistant, parse_number  # noqa: E402
+import weather  # noqa: E402
 from screen import Dashboard  # noqa: E402
 
 ui = Dashboard(d)
@@ -36,7 +38,7 @@ def charging():
 def redraw_battery():
     ch = charging()
     if state["soc"] is not None:
-        ui.set_battery(state["soc"], bool(ch))
+        ui.set_battery(state["soc"], bool(ch), state["volts"])
     else:
         ui.set_voltage(state["volts"], ch)
     ui.set_power(state["power"], ch)
@@ -87,17 +89,58 @@ async def network_task():
         await asyncio.sleep(5)
 
 
+async def anim_task():
+    while True:
+        t0 = time.ticks_ms()
+        ui.animate(t0)
+        spent = time.ticks_diff(time.ticks_ms(), t0)
+        await asyncio.sleep_ms(max(5, config.ANIM_FRAME_MS - spent))
+
+
+async def weather_task(ha):
+    hourly, sun, next_fetch = None, None, 0
+    while True:
+        if net.wlan.isconnected() and time.ticks_diff(time.ticks_ms(), next_fetch) >= 0:
+            try:
+                st = ha.get_state(config.WEATHER)
+                sun_st = ha.get_state(config.SUN)
+                sun = sun_st["attributes"] if sun_st else None
+                hourly = None  # free the old forecast before parsing the new one
+                gc.collect()
+                hourly = ha.forecast(config.WEATHER, "hourly")
+                # keep only what the warning logic needs
+                hourly = [{k: f.get(k) for k in ("datetime", "condition", "precipitation",
+                                                 "wind_speed", "wind_gust_speed")}
+                          for f in hourly[:config.WARN_HOURS + 1]] if hourly else None
+                gc.collect()
+                if st:
+                    night = weather.is_night(time.time(), sun)
+                    ui.set_weather(weather.icon_for(st["state"], night),
+                                   st["attributes"].get("temperature"))
+                next_fetch = time.ticks_add(time.ticks_ms(), config.WEATHER_REFRESH_S * 1000)
+            except (OSError, ValueError, KeyError) as e:
+                print("weather:", repr(e))
+                next_fetch = time.ticks_add(time.ticks_ms(), 60 * 1000)
+        if state["synced"] and hourly is not None:
+            ui.set_warning(weather.find_warning(hourly, time.time()))
+        # retry quickly until the first forecast arrives, then once a minute
+        await asyncio.sleep(60 if hourly is not None else 5)
+
+
 async def main():
     entities = (config.BATTERY_SOC, config.BATTERY_VOLTAGE, config.BATTERY_POWER,
                 config.BATTERY_STATE, config.LOAD_POWER, config.GRID)
+    tasks = [clock_task(), network_task(), anim_task()]
     if getattr(secrets, "HA_TOKEN", None):
         # REST API with a long-lived token: works without any HA configuration
         from ha_rest import HomeAssistantREST
         ha = HomeAssistantREST(entities, on_state, ui.set_mqtt)
+        tasks.append(weather_task(ha))
     else:
-        # MQTT: needs mqtt_statestream in HA's configuration.yaml
+        # MQTT: needs mqtt_statestream in HA's configuration.yaml (no weather)
         ha = HomeAssistant(entities, on_state, ui.set_mqtt)
-    await asyncio.gather(clock_task(), network_task(), ha.run())
+    tasks.append(ha.run())
+    await asyncio.gather(*tasks)
 
 
 asyncio.run(main())

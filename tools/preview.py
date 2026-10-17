@@ -13,7 +13,7 @@ os.environ["TZ"] = "UTC"
 time.tzset()
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path[:0] = [str(ROOT / "tools" / "hoststub"), str(ROOT / "device" / "lib")]
+sys.path[:0] = [str(ROOT / "tools" / "hoststub"), str(ROOT / "device" / "lib"), str(ROOT / "device")]
 
 from PIL import Image  # noqa: E402
 
@@ -58,6 +58,13 @@ def main():
     ui.set_load(612)
     ui.set_grid(False)
     ui.set_mqtt(True)
+    ui.set_weather("partlycloudy", 11.2)
+    if "--anim" in sys.argv:
+        ui.set_battery(64, charging=False, volts=52.4)
+        ui.set_warning(None)
+        ui.animate(int(sys.argv[sys.argv.index("--anim") + 1]) if sys.argv[-1].isdigit() else 2400)
+    else:
+        ui.set_warning({"icon": "rainy", "title": "Дощ", "detail": "3,4 мм/год", "when": "о 15:00"})
     to_png(out, scale)
     print(out)
 

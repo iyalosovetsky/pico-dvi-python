@@ -20,6 +20,7 @@ class Display:
         self.fb = framebuf.FrameBuffer(self.buf, self.w, self.h, picodvi.FORMAT)
         self.rom = rom
         self._fonts = {}
+        self._images = {}
         with open(rom + "/icons.json") as f:
             self._icons = json.load(f)
 
@@ -51,6 +52,13 @@ class Display:
     def icon(self, name, size, x, y, color, bg=-1):
         cp = self._icons.get(name) or self._icons["help-circle-outline"]
         picodvi.draw_text(self.font("mdi%d" % size), chr(cp), x, y, color, bg)
+
+    def image(self, path, x, y):
+        """Blits a PIM1 colour image from ROMFS (path relative to rom root)."""
+        img = self._images.get(path)
+        if img is None:
+            img = self._images[path] = _load(self.rom + "/" + path)
+        picodvi.blit(img, x, y)
 
     def fill(self, c):
         self.fb.fill(c)

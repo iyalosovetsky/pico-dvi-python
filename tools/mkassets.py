@@ -35,7 +35,7 @@ FONTS = [
     ("ui16", 16, 400, TEXT),
     ("ui20", 20, 500, TEXT),
     ("val36", 36, 500, TEXT),
-    ("clock96", 96, 300, "0123456789:"),
+    ("clock80", 80, 300, "0123456789:"),
 ]
 
 # MDI icons (same names as Home Assistant, without the "mdi:" prefix)
@@ -55,6 +55,9 @@ ICONS = [
     "bell", "message-text", "lan-disconnect", "help-circle-outline",
 ]
 ICON_SIZES = (24, 48)
+
+# Colour weather icons (tools/wxicons.py): size for "now" and for the warning
+WX_SIZES = (56, 44)
 
 
 def set_weight(font, weight):
@@ -121,6 +124,8 @@ def mdi_codepoints():
 def main():
     out = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE.parent / "romfs"
     (out / "fonts").mkdir(parents=True, exist_ok=True)
+    for old in (out / "fonts").glob("*.fnt"):
+        old.unlink()
     total = 0
     for name, size, weight, chars in FONTS:
         font = ImageFont.truetype(UBUNTU, size)
@@ -141,6 +146,18 @@ def main():
         (out / "fonts" / f"mdi{size}.fnt").write_bytes(blob)
         total += len(blob)
         print(f"mdi{size:<7d} {len(ICONS):4d} glyphs {len(blob):7d} B")
+    import wxicons
+    (out / "wx").mkdir(exist_ok=True)
+    for old in (out / "wx").glob("*.pim"):
+        old.unlink()
+    for size in WX_SIZES:
+        n = 0
+        for name in wxicons.NAMES:
+            blob = wxicons.pack_pim(wxicons.draw(name, size))
+            (out / "wx" / f"{name}_{size}.pim").write_bytes(blob)
+            n += len(blob)
+        total += n
+        print(f"wx{size:<8d} {len(wxicons.NAMES):4d} icons  {n:7d} B")
     (out / "icons.json").write_text(json.dumps({n: cps[n] for n in ICONS}, separators=(",", ":")))
     print(f"total {total} B -> {out}")
 

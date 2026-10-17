@@ -363,6 +363,345 @@ static mp_obj_t picodvi_font_metrics(mp_obj_t font_in) {
 }
 static MP_DEFINE_CONST_FUN_OBJ_1(picodvi_font_metrics_obj, picodvi_font_metrics);
 
+// blit(img, x, y): draws a PIM1 image (tools/wxicons.py: RGB565 + 8-bit alpha
+// per pixel) alpha-blended over the framebuffer, clipped to the screen.
+static inline uint32_t blend565_a8(uint32_t bg, uint32_t fg, uint32_t a) {
+    // blend all three channels at once in a spread 32-bit word (0x07e0f81f trick)
+    uint32_t b = (bg | (bg << 16)) & 0x07e0f81f;
+    uint32_t f = (fg | (fg << 16)) & 0x07e0f81f;
+    uint32_t r = ((((f - b) * (a >> 3)) >> 5) + b) & 0x07e0f81f;
+    return (r | (r >> 16)) & 0xffff;
+}
+
+static mp_obj_t picodvi_blit(mp_obj_t img_in, mp_obj_t x_in, mp_obj_t y_in) {
+    mp_buffer_info_t bi;
+    mp_get_buffer_raise(img_in, &bi, MP_BUFFER_READ);
+    const uint8_t *d = bi.buf;
+    if (bi.len < 8 || memcmp(d, "PIM1", 4) != 0) {
+        mp_raise_ValueError(MP_ERROR_TEXT("not a PIM1 image"));
+    }
+    int w = rd16(d + 4), h = rd16(d + 6);
+    if (bi.len < 8 + (size_t)w * h * 3) {
+        mp_raise_ValueError(MP_ERROR_TEXT("truncated image"));
+    }
+    int x0 = mp_obj_get_int(x_in), y0 = mp_obj_get_int(y_in);
+    const uint8_t *src = d + 8;
+    pix_t *fb = (pix_t *)framebuf;
+    for (int row = 0; row < h; ++row) {
+        int py = y0 + row;
+        if (py < 0 || py >= (int)frame_height) {
+            src += w * 3;
+            continue;
+        }
+        pix_t *dst = fb + py * frame_width;
+        for (int col = 0; col < w; ++col, src += 3) {
+            int px = x0 + col;
+            uint32_t a = src[2];
+            if (px < 0 || px >= (int)frame_width || a == 0) {
+                continue;
+            }
+            uint32_t c = src[0] | (src[1] << 8);
+            #if PICODVI_BPP == 16
+            dst[px] = a >= 248 ? c : blend565_a8(dst[px], c, a);
+            #else
+            // RP2040: 565 -> 332, alpha quantised to 4 bits
+            pix_t c8 = ((c >> 8) & 0xe0) | ((c >> 6) & 0x1c) | ((c >> 3) & 0x03);
+            uint a4 = a >> 4;
+            dst[px] = a4 >= 15 ? c8 : a4 ? blend(dst[px], c8, a4) : dst[px];
+            #endif
+        }
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_3(picodvi_blit_obj, picodvi_blit);
+
+// julia(x, y, w, h, c_re, c_im, step, palette, shift, maxit, mul, inside,
+//       radius=0, ex_x=0, ex_y=0, ex_w=0, ex_h=0)
+// Renders a Julia set z -> z^2 + c straight into the framebuffer region,
+// fixed point Q13 (c_re, c_im, step are Q13 ints: 8192 = 1.0; the region is
+// centred on 0). Colour = palette[(iterations * mul + shift) & 255] (palette:
+// 256 native pixels as array('H')); points that do not escape get `inside`.
+// radius rounds the region corners; the ex_* rectangle is left untouched
+// (e.g. for a text overlay), so animation never flickers over it.
+#define Q 13
+
+// Pixels to skip at both ends of row j of a w x h rectangle with corner radius rad.
+static int round_skip(int j, int h, int rad) {
+    if (!rad) {
+        return 0;
+    }
+    int dy = j < rad ? rad - j : (j >= h - rad ? j - (h - rad - 1) : 0);
+    int k = 0;
+    if (dy) {
+        while (k < rad && (rad - k) * (rad - k) + dy * dy > rad * rad) {
+            ++k;
+        }
+    }
+    return k;
+}
+
+static mp_obj_t picodvi_julia(size_t n_args, const mp_obj_t *args) {
+    int x0 = mp_obj_get_int(args[0]), y0 = mp_obj_get_int(args[1]);
+    int w = mp_obj_get_int(args[2]), h = mp_obj_get_int(args[3]);
+    int32_t cre = mp_obj_get_int(args[4]), cim = mp_obj_get_int(args[5]);
+    int32_t step = mp_obj_get_int(args[6]);
+    mp_buffer_info_t pal;
+    mp_get_buffer_raise(args[7], &pal, MP_BUFFER_READ);
+    if (pal.len < 512) {
+        mp_raise_ValueError(MP_ERROR_TEXT("palette needs 256 entries"));
+    }
+    const uint16_t *palette = pal.buf;
+    uint32_t shift = mp_obj_get_int(args[8]);
+    int maxit = mp_obj_get_int(args[9]);
+    uint32_t mul = mp_obj_get_int(args[10]);
+    pix_t inside = mp_obj_get_int(args[11]);
+    int rad = n_args > 12 ? mp_obj_get_int(args[12]) : 0;
+    int ex = 0, ey = 0, ew = 0, eh = 0;
+    if (n_args > 16) {
+        ex = mp_obj_get_int(args[13]) - x0;
+        ey = mp_obj_get_int(args[14]) - y0;
+        ew = mp_obj_get_int(args[15]);
+        eh = mp_obj_get_int(args[16]);
+    }
+    const int32_t four = 4 << Q;
+    pix_t *fb = (pix_t *)framebuf;
+    for (int j = 0; j < h; ++j) {
+        int py = y0 + j;
+        if (py < 0 || py >= (int)frame_height) {
+            continue;
+        }
+        int skip = round_skip(j, h, rad);
+        pix_t *dst = fb + py * frame_width;
+        int32_t zi0 = (j - h / 2) * step;
+        for (int i = skip; i < w - skip; ++i) {
+            int px = x0 + i;
+            if (px < 0 || px >= (int)frame_width) {
+                continue;
+            }
+            if (i >= ex && i < ex + ew && j >= ey && j < ey + eh) {
+                continue;
+            }
+            int32_t zr = (i - w / 2) * step, zi = zi0;
+            int it = 0;
+            const int32_t two = 2 << Q;
+            while (it < maxit) {
+                // |z| > 2 escapes; checking first also keeps the squares in int32
+                if (zr > two || zr < -two || zi > two || zi < -two) {
+                    break;
+                }
+                int32_t zr2 = (zr * zr) >> Q, zi2 = (zi * zi) >> Q;
+                if (zr2 + zi2 > four) {
+                    break;
+                }
+                zi = ((zr * zi) >> (Q - 1)) + cim;
+                zr = zr2 - zi2 + cre;
+                ++it;
+            }
+            dst[px] = it >= maxit ? inside : (pix_t)palette[(it * mul + shift) & 255];
+        }
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picodvi_julia_obj, 12, 17, picodvi_julia);
+
+// effect(kind, x, y, w, h, t, palette, radius=0)
+// Palette-mapped procedural animations for small regions; t = time in ms.
+//   0 plasma     - sum of travelling sine waves
+//   1 metaballs  - "lava lamp" blobs on Lissajous paths
+//   2 ripples    - interference of circular waves from moving sources
+//   3 bloom      - kaleidoscope flower: counter-rotating petal layers with
+//                  glowing rims, central rays and green filaments (own colours)
+static int8_t sin8[256];  // sin(2*pi*i/256) * 127
+
+static void sin8_init(void) {
+    if (sin8[64]) {
+        return;
+    }
+    // quarter-wave by integer recurrence would be overkill: use libm once
+    for (int i = 0; i < 256; ++i) {
+        float a = i * (6.2831853f / 256.0f);
+        sin8[i] = (int8_t)(127.0f * __builtin_sinf(a));
+    }
+}
+
+static inline int isin(int a) {
+    return sin8[a & 255];
+}
+
+static uint32_t isqrt32(uint32_t v) {
+    uint32_t r = 0, bit = 1u << 30;
+    while (bit > v) {
+        bit >>= 2;
+    }
+    while (bit) {
+        if (v >= r + bit) {
+            v -= r + bit;
+            r = (r >> 1) + bit;
+        } else {
+            r >>= 1;
+        }
+        bit >>= 2;
+    }
+    return r;
+}
+
+// Polar coordinates of the effect region, computed once per region size.
+#define POLAR_MAX (100 * 100)
+static uint8_t polar_a[POLAR_MAX], polar_r[POLAR_MAX];
+static int polar_w, polar_h;
+
+static void polar_init(int w, int h) {
+    if (w == polar_w && h == polar_h) {
+        return;
+    }
+    for (int j = 0; j < h; ++j) {
+        for (int i = 0; i < w; ++i) {
+            float dx = i - w / 2 + 0.5f, dy = j - h / 2 + 0.5f;
+            float a = __builtin_atan2f(dy, dx) * (256.0f / 6.2831853f);
+            polar_a[j * w + i] = (uint8_t)(int)(a < 0 ? a + 256.0f : a);
+            float r = __builtin_sqrtf(dx * dx + dy * dy);
+            polar_r[j * w + i] = r > 255 ? 255 : (uint8_t)r;
+        }
+    }
+    polar_w = w;
+    polar_h = h;
+}
+
+static inline pix_t rgb_pix(int r, int g, int b) {
+    r = r > 255 ? 255 : r;
+    g = g > 255 ? 255 : g;
+    b = b > 255 ? 255 : b;
+    #if PICODVI_BPP == 16
+    return ((r & 0xf8) << 8) | ((g & 0xfc) << 3) | (b >> 3);
+    #else
+    return (r & 0xe0) | ((g & 0xe0) >> 3) | (b >> 6);
+    #endif
+}
+
+static mp_obj_t picodvi_effect(size_t n_args, const mp_obj_t *args) {
+    int kind = mp_obj_get_int(args[0]);
+    int x0 = mp_obj_get_int(args[1]), y0 = mp_obj_get_int(args[2]);
+    int w = mp_obj_get_int(args[3]), h = mp_obj_get_int(args[4]);
+    uint32_t t = mp_obj_get_int(args[5]);
+    mp_buffer_info_t pal;
+    mp_get_buffer_raise(args[6], &pal, MP_BUFFER_READ);
+    if (pal.len < 512) {
+        mp_raise_ValueError(MP_ERROR_TEXT("palette needs 256 entries"));
+    }
+    const uint16_t *palette = pal.buf;
+    int rad = n_args > 7 ? mp_obj_get_int(args[7]) : 0;
+    sin8_init();
+    if (kind == 3) {
+        if (w * h > POLAR_MAX) {
+            mp_raise_ValueError(MP_ERROR_TEXT("region too large"));
+        }
+        polar_init(w, h);
+    }
+
+    // per-frame parameters (positions in pixels, relative to the region)
+    int bx[5], by[5];
+    int nb = kind == 1 ? 5 : 3;
+    for (int k = 0; k < nb; ++k) {
+        int ph = k * 51;
+        bx[k] = w / 2 + isin((t >> (4 + (k & 1))) + ph) * (w / 2 - 6) / 127;
+        by[k] = h / 2 + isin((t >> 5) * (k + 2) / 2 + ph * 3 + 64) * (h / 2 - 6) / 127;
+    }
+    uint32_t tt = t >> 4;  // slow time base, 1 unit = 16 ms
+
+    pix_t *fb = (pix_t *)framebuf;
+    for (int j = 0; j < h; ++j) {
+        int py = y0 + j;
+        if (py < 0 || py >= (int)frame_height) {
+            continue;
+        }
+        int skip = round_skip(j, h, rad);
+        pix_t *dst = fb + py * frame_width;
+        for (int i = skip; i < w - skip; ++i) {
+            int px = x0 + i;
+            if (px < 0 || px >= (int)frame_width) {
+                continue;
+            }
+            int v;
+            if (kind == 3) {
+                int a = polar_a[j * w + i], r = polar_r[j * w + i];
+                int R = (w < h ? w : h) / 2;
+                // outer layer: 8 breathing petals, rotating
+                int b1 = R * 3 / 4 + (isin(a * 8 + tt) * R / 6 >> 7);
+                // inner layer: 12 petals, counter-rotating
+                int b2 = R * 2 / 5 + (isin(a * 12 - tt * 2) * R / 9 >> 7);
+                int d1 = r - b1 < 0 ? b1 - r : r - b1;
+                int d2 = r - b2 < 0 ? b2 - r : r - b2;
+                int blue = 0, red = 0, green = 0;
+                if (r < b1) {
+                    blue += 50 + r * 90 / (b1 + 1);  // translucent petal body
+                    // speckled texture inside the petals
+                    if (isin(a * 20 + r * 9 + tt) * isin(r * 13 - a * 6 - tt) > 7000) {
+                        green += 110;
+                    }
+                }
+                if (d1 < 4) {  // glowing outer rim, violet
+                    blue += (4 - d1) * 45;
+                    red += (4 - d1) * 30;
+                }
+                if (r < b2) {
+                    blue += 40;
+                }
+                if (d2 < 3) {  // inner rim, brighter and cyan-ish
+                    blue += (3 - d2) * 60;
+                    green += (3 - d2) * 25;
+                }
+                int core = R / 3;
+                if (r < core && isin(a * 24 + tt * 3) > 70) {  // central rays
+                    blue += (core - r) * 200 / core;
+                    red += (core - r) * 70 / core;
+                }
+                if (r < 4) {
+                    blue += 255;
+                    red += 120;
+                    green += 60;
+                }
+                if (r > b1 + 2) {  // green filaments around the flower
+                    int fade = 150 - (r - b1) * 10;
+                    if (fade > 0 && isin(a * 48 + r * 6 - tt * 2) > 105) {
+                        green += fade;
+                        blue += fade / 4;
+                    }
+                }
+                dst[px] = rgb_pix(red, green + blue / 6, blue);
+                continue;
+            }
+            if (kind == 0) {
+                // plasma: four waves in different directions and speeds
+                v = isin(i * 3 + tt) + isin(j * 4 - tt * 2 / 3)
+                    + isin((i + j) * 2 + tt / 2) + isin(isqrt32((i - bx[0]) * (i - bx[0]) + (j - by[0]) * (j - by[0])) * 6 - tt);
+                v = (v + 508) >> 2;  // -508..508 -> 0..254
+                v = (v + (tt >> 1)) & 255;
+            } else if (kind == 1) {
+                // metaballs: field = sum r^2 / d^2, banded into the palette
+                int32_t f = 0;
+                for (int k = 0; k < nb; ++k) {
+                    int dx = i - bx[k], dy = j - by[k];
+                    int32_t d2 = dx * dx + dy * dy + 1;
+                    f += (int32_t)(150 * 1024) / d2;
+                }
+                // crisp blob surface at f = 1024, soft glow outside
+                v = f >= 1024 ? 190 + (f - 1024 > 4095 ? 65 : (f - 1024) >> 6) : f * 150 >> 10;
+            } else {
+                // ripples: three circular wave sources
+                v = 0;
+                for (int k = 0; k < 3; ++k) {
+                    int dx = i - bx[k], dy = j - by[k];
+                    v += isin(isqrt32(dx * dx + dy * dy) * 7 - tt * 3);
+                }
+                v = (v + 381) * 255 / 762;
+            }
+            dst[px] = (pix_t)palette[v & 255];
+        }
+    }
+    return mp_const_none;
+}
+static MP_DEFINE_CONST_FUN_OBJ_VAR_BETWEEN(picodvi_effect_obj, 7, 8, picodvi_effect);
+
 // debug() -> (core1 stage, scanlines delivered, DMA IRQs, scanlines encoded,
 //             q_tmds_valid, q_tmds_free, q_colour_valid, q_colour_free, late scanlines)
 static mp_obj_t picodvi_debug(void) {
@@ -392,6 +731,9 @@ static const mp_rom_map_elem_t picodvi_module_globals_table[] = {
     { MP_ROM_QSTR(MP_QSTR_draw_text), MP_ROM_PTR(&picodvi_draw_text_obj) },
     { MP_ROM_QSTR(MP_QSTR_text_width), MP_ROM_PTR(&picodvi_text_width_obj) },
     { MP_ROM_QSTR(MP_QSTR_font_metrics), MP_ROM_PTR(&picodvi_font_metrics_obj) },
+    { MP_ROM_QSTR(MP_QSTR_blit), MP_ROM_PTR(&picodvi_blit_obj) },
+    { MP_ROM_QSTR(MP_QSTR_julia), MP_ROM_PTR(&picodvi_julia_obj) },
+    { MP_ROM_QSTR(MP_QSTR_effect), MP_ROM_PTR(&picodvi_effect_obj) },
     { MP_ROM_QSTR(MP_QSTR_size), MP_ROM_PTR(&picodvi_size_obj) },
     { MP_ROM_QSTR(MP_QSTR_MODE_400x240), MP_ROM_INT(MODE_400x240) },
     { MP_ROM_QSTR(MP_QSTR_MODE_320x240), MP_ROM_INT(MODE_320x240) },

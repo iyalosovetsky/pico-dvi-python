@@ -11,9 +11,9 @@ MicroPython v1.29.0 для Raspberry Pi Pico 2 W (RP2350) і Pico W (RP2040) з 
 | `picodvi/` | C-модуль `picodvi` + вендорна копія `libdvi` з [Wren6991/PicoDVI](https://github.com/Wren6991/PicoDVI) (commit `dccd738`, BSD-3) з патчами під MicroPython |
 | `boards/PICO2_W_DVI/` | Конфіг Pico 2 W (копія `RPI_PICO2_W` + хук soft-reset, 4 КБ C-heap, без `_thread`) |
 | `boards/PICO_W_DVI/` | Те саме для Pico W |
-| `device/` | Дашборд: `main.py`, `config.py` + `lib/` (display, screen, tz, net, ha, ha_rest) |
+| `device/` | Дашборд: `main.py`, `config.py` + `lib/` (display, screen, tz, net, ha, ha_rest, weather) |
 | `romfs/` | Згенеровані шрифти `.fnt` і піктограми MDI (ROMFS, `tools/mkassets.py`) |
-| `tools/` | `mkassets.py` (TTF/MDI → `.fnt`), `preview.py` (рендер екрана в PNG на ПК), `hoststub/` |
+| `tools/` | `mkassets.py` (TTF/MDI → `.fnt`, погодні піктограми → `.pim`), `wxicons.py`, `preview.py` (рендер екрана в PNG на ПК), `hoststub/` |
 | `demo/main.py` | Демка: палітра, plasma (viper), м'ячики, зоряне поле |
 | `firmware/` | Готові прошивки `micropython-pico2-w-dvi.uf2`, `micropython-pico-w-dvi.uf2` |
 | `build.sh` | Збірка прошивки |
@@ -69,6 +69,16 @@ mqtt_statestream:
       - binary_sensor.inverter_grid
 ```
 
+### Погода й анімації
+
+- Погода з `weather.forecast_golovna` (REST): ліворуч від годинника кольорова піктограма
+  (`tools/wxicons.py`, 16 станів HA, день/ніч за `sun.sun`) і температура.
+- Праворуч — попередження з погодинного прогнозу на 12 год, лише якщо очікується негода
+  (дощ ≥ 2 мм/год, сніг ≥ 0,5 мм/год, вітер ≥ 30 км/год, гроза, град); пороги в `config.py`.
+- Без попередження там по черзі (по 20 с) анімації, що рахуються на C: фрактал Жюліа,
+  плазма, лавова лампа, хвилі, «квітка»-калейдоскоп (`picodvi.julia`, `picodvi.effect`).
+- Батарея: SOC, а нижче 53 В — ще й напруга.
+
 Пристрій публікує `picodvi/status` = `online`/`offline` (last will). MQTT-клієнт — `umqtt.simple`
 (вшитий у прошивку).
 
@@ -85,6 +95,8 @@ picodvi.size()                        # (W, H) поточного режиму
 picodvi.active()                      # True, якщо DVI запущено
 picodvi.draw_text(font, "Привіт", x, y, color, bg=-1)   # згладжений текст/піктограма, -> x після тексту
 picodvi.text_width(font, s); picodvi.font_metrics(font)   # (line_height, ascent)
+picodvi.blit(pim, x, y)               # кольорове зображення PIM1 (RGB565 + альфа)
+picodvi.julia(...); picodvi.effect(kind, x, y, w, h, t_ms, palette, radius)   # анімації
 picodvi.debug()                       # (stage, lines, irqs, encoded, q_tmds_valid, q_tmds_free, q_col_valid, q_col_free, late)
 ```
 
