@@ -14,8 +14,9 @@
 #           Pico; printed back down. 4x M3 screws go through bosses in the back
 #           into the bezel (self-tapping M3, or heat-set inserts with
 #           screw_pilot = 4.0), 2x M3 into the lower board standoffs.
-#   Cap   - separate hump over the Pico, glued into the opening with its lip;
-#           printed roof down. The USB-C plug lies under the back plate, the
+#   Cap   - separate hump over the Pico; its lip goes into the opening and
+#           4 snap fingers (long sides) click under the plate edge; printed
+#           roof down. The USB-C plug lies under the back plate, the
 #           cable leaves through a hole in it into the gap behind the case.
 #   Feet  - two spacers at the bottom of the back, as high as the cap, so the
 #           case hangs straight on the wall. Each is held by an M3 x 8 screwed
@@ -100,7 +101,7 @@ DEFAULTS = [
     # panel edge -> centre (124 - 82.35 - 31, 26.5 - 50 + 35)
     ("stand_cx", 10.65, "standoff rectangle centre X (seen from the back, + right)"),
     ("stand_cy", 11.5, "standoff rectangle centre Y (+ up)"),
-    ("stand_dx", 62.0, "standoff spacing, horizontal (measured)"),
+    ("stand_dx", 63.0, "standoff spacing, horizontal (measured 62; +1 after the test print)"),
     ("stand_dy", 70.0, "standoff spacing, vertical (measured)"),
     ("board_margin", 6.0, "keep-out around the driver board (standoffs +/- this + 4.5 mm board overhang)"),
     ("board_top", 9.4, "height of the standoff tops above the panel back (13 from the panel front)"),
@@ -108,8 +109,9 @@ DEFAULTS = [
     # parts sticking out above the standoff tops, positions from the photo
     # (same frame: seen from the back, FPC edge down)
     ("rad_x", 7.7, "heatsink centre X (14 x 14 mm, 4-5 mm above the standoffs)"),
-    ("rad_y", 0.2, "heatsink centre Y"),
-    ("rad_win", 18.0, "square window in the back plate for the heatsink"),
+    ("rad_y", -0.8, "heatsink window centre Y"),
+    ("rad_win", 18.0, "heatsink window width (X)"),
+    ("rad_win_h", 20.0, "heatsink window height (Y): 2 mm more downwards after the test print"),
     ("pico_x0", -17.0, "cap clear area over the Pico: X from (microUSB end)"),
     ("pico_x1", 40.5, "... X to (next to standoff 4)"),
     ("pico_y0", 24.0, "... Y from"),
@@ -118,6 +120,10 @@ DEFAULTS = [
     ("cap_clear", 1.5, "air above the Pico under the cap roof"),
     ("cap_lip", 1.4, "cap lip width (goes into the opening, wall is wall + lip thick)"),
     ("cap_fit", 0.2, "gap between the cap lip and the opening"),
+    ("snap_n", 2, "snap fingers per long side of the cap (0 = glue it)"),
+    ("snap_w", 8.0, "snap finger width"),
+    ("snap_pitch", 28.0, "distance between the fingers on one side"),
+    ("snap_hook", 0.8, "hook depth past the finger (0.6 past the opening edge)"),
     ("feet_on", 1, "1 = two spacer feet for the wall, screwed from inside (M3 x 8)"),
     ("foot_w", 14.0, "foot size"),
     ("foot_y", -42.0, "foot centre Y (X = +/- key_span / 2)"),
@@ -366,7 +372,7 @@ def build(p):
             back = back.cut(Part.makeCylinder(p["stand_hole"] / 2, wl + 2, V(x, y, zb - wl - 1)))
     # window for the heatsink (sticks out 4-5 mm above the standoffs)
     rw = p["rad_win"]
-    back = back.cut(rounded_box(rw, rw, wl + 2, 2.0, zb - wl - 1).translate(V(p["rad_x"], p["rad_y"], 0)))
+    back = back.cut(rounded_box(rw, p["rad_win_h"], wl + 2, 2.0, zb - wl - 1).translate(V(p["rad_x"], p["rad_y"], 0)))
     # screw holes for the feet (screwed from inside, head on the plate)
     if p["feet_on"]:
         for sx in (-1, 1):
@@ -446,7 +452,40 @@ def build_cap(p, zb, wl):
         x = (p["pico_x0"] + p["pico_x1"]) / 2 + (k - 1.5) * 9.0
         cap = cap.cut(rounded_box(3.0, 14.0, wl + 2, 1.49, zt - wl - 1).translate(
             V(x, (p["pico_y0"] + p["pico_y1"]) / 2, 0)))
-    return cap
+    return add_snaps(cap, p, zb, wl, zt)
+
+
+def add_snaps(cap, p, zb, wl, zt):
+    """Cantilever snap fingers in the long walls of the cap. Each finger is the
+    inner lip-thick part of the wall, freed by two slits, hanging from the roof;
+    below the plate it ends in an outward hook (45 deg lead-in) that clicks
+    under the edge of the opening. The fingers flex ~0.6 mm while inserting."""
+    n = int(p["snap_n"])
+    if n <= 0:
+        return cap
+    lip, fit, w, hk = p["cap_lip"], p["cap_fit"], p["snap_w"], p["snap_hook"]
+    t = lip - fit  # finger thickness = lip width
+    z_plate = zb - wl  # inner face of the back plate
+    z_catch = z_plate - 0.1  # hook top, 0.1 play under the plate
+    z_slit = zt - wl - 1.5  # fingers hang from 1.5 mm below the roof
+    cx = (p["pico_x0"] + p["pico_x1"]) / 2
+    for side, y_in in ((-1, p["pico_y0"]), (1, p["pico_y1"])):
+        for k in range(n):
+            x = cx + (k - (n - 1) / 2) * p["snap_pitch"]
+            # two slits through the wall + the outer part of the wall in front of the finger
+            y0 = y_in - 0.1 if side > 0 else y_in - lip - wl - 0.5
+            for sx in (-1, 1):
+                cap = cap.cut(Part.makeBox(0.8, lip + wl + 0.6, z_slit - z_plate + wl + 1,
+                                           V(x + sx * (w / 2 + 0.4) - 0.4, y0, z_plate - wl - 1)))
+            y0 = y_in + t if side > 0 else y_in - lip - wl - 0.5
+            cap = cap.cut(Part.makeBox(w, lip + wl - t + 0.5, z_slit - z_plate + 1, V(x - w / 2, y0, z_plate - 1)))
+            # finger extension below the plate + hook
+            y_out = y_in + side * t
+            cap = cap.fuse(Part.makeBox(w, t, z_plate - (z_catch - hk) + 0.01, V(x - w / 2, min(y_in, y_out), z_catch - hk)))
+            prof = Part.makePolygon([V(x - w / 2, y_out, z_catch), V(x - w / 2, y_out + side * hk, z_catch),
+                                     V(x - w / 2, y_out, z_catch - hk), V(x - w / 2, y_out, z_catch)])
+            cap = cap.fuse(Part.Face(prof).extrude(V(w, 0, 0)))
+    return cap.removeSplitter()
 
 
 def build_feet(p, zb, wl):
