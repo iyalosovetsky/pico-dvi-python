@@ -123,7 +123,8 @@ DEFAULTS = [
     ("snap_n", 2, "snap fingers per long side of the cap (0 = glue it)"),
     ("snap_w", 8.0, "snap finger width"),
     ("snap_pitch", 28.0, "distance between the fingers on one side"),
-    ("snap_hook", 0.8, "hook depth past the finger (0.6 past the opening edge)"),
+    ("snap_hook", 1.2, "hook depth past the finger (1.0 past the opening edge; 0.8 did not hold)"),
+    ("snap_play", 0.4, "hook top below the plate (print tolerance; 0.1 did not snap in)"),
     ("feet_on", 1, "1 = two spacer feet for the wall, screwed from inside (M3 x 8)"),
     ("foot_w", 14.0, "foot size"),
     ("foot_y", -42.0, "foot centre Y (X = +/- key_span / 2)"),
@@ -466,7 +467,7 @@ def add_snaps(cap, p, zb, wl, zt):
     lip, fit, w, hk = p["cap_lip"], p["cap_fit"], p["snap_w"], p["snap_hook"]
     t = lip - fit  # finger thickness = lip width
     z_plate = zb - wl  # inner face of the back plate
-    z_catch = z_plate - 0.1  # hook top, 0.1 play under the plate
+    z_catch = z_plate - p["snap_play"]  # hook top, below the plate
     z_slit = zt - wl - 1.5  # fingers hang from 1.5 mm below the roof
     cx = (p["pico_x0"] + p["pico_x1"]) / 2
     for side, y_in in ((-1, p["pico_y0"]), (1, p["pico_y1"])):
