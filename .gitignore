@@ -4,3 +4,7 @@ secrets.py
 tools/cache/
 preview.png
 *.FCBak
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json
